@@ -1,4 +1,5 @@
 # TODO
+- fix the expression parser
 pentru i<-1,10 executa
 	scrie i
 

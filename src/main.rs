@@ -1,6 +1,6 @@
 // use std::env;
 
-use std::{fs::File, io::Read};
+use std::{fs::File, io::Read, iter};
 use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 use std::collections::HashMap;
@@ -168,13 +168,13 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 				Operator::Rparen => panic!(),
 				Operator::UnaryOp(op) => todo!(),
 				Operator::BinaryOp(op) => match op {
-					BinaryOp::Add => 1,
-					BinaryOp::Sub => 1,
-					BinaryOp::Mul => 2,
-					BinaryOp::Div => 2,
-					BinaryOp::Lt => 3,
-					BinaryOp::Gt => 3,
-					BinaryOp::Equ => 3,
+					BinaryOp::Lt => 1,
+					BinaryOp::Gt => 1,
+					BinaryOp::Equ => 1,
+					BinaryOp::Add => 2,
+					BinaryOp::Sub => 2,
+					BinaryOp::Mul => 3,
+					BinaryOp::Div => 3,
 					_ => todo!(),
 				}
 			}
@@ -182,43 +182,37 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 	}
 	
 	#[derive(Debug)]
-	enum State { ParsingExpression, ParsingFloatLiteral, ParsingLvalueLiteral }
+	enum State { ParsingExpression, ParsingFloatLiteral, ParsingLvalue }
 
-	let sustalache = |state: &mut State, operands: &mut Vec<Rvalue<'a>>, cursor: &mut usize, idk: Option<(usize, &'a str)>| {
+	#[derive(Debug)]
+	enum Expecting { Operator, Operand }
+	let mut expecting = Expecting::Operand;
+
+	let try_push_operand = |state: &mut State, expecting: &mut Expecting, operands: &mut Vec<Rvalue<'a>>, cursor: &mut usize, u: usize, should_push: bool| {
 		match state {
 			State::ParsingFloatLiteral => {
-				if let Some((u, grapheme)) = idk {
-					if not_variable(grapheme) {
-						*state = State::ParsingExpression;
-						operands.push(Rvalue::Literal(code[*cursor..u].parse().unwrap()));
-						*cursor = u;
-					}
-				} else {
+				if should_push {
 					*state = State::ParsingExpression;
-					operands.push(Rvalue::Literal(code[*cursor..].parse().unwrap()));
-					*cursor = code.len()-1;
+					operands.push(Rvalue::Literal(code[*cursor..u].parse().unwrap()));
+					*cursor = u;
+					*expecting = Expecting::Operator;
 				}
 			}
-			State::ParsingLvalueLiteral => {
-				if let Some((u, grapheme)) = idk {
-					if not_variable(grapheme) {
-						*state = State::ParsingExpression;
-						operands.push(Rvalue::Lvalue(Lvalue(&code[*cursor..u])));
-						*cursor = u;
-					}
-				} else {
+			State::ParsingLvalue => {
+				if should_push {
 					*state = State::ParsingExpression;
-					operands.push(Rvalue::Lvalue(Lvalue(&code[*cursor..])));
-					*cursor = code.len()-1;
+					operands.push(Rvalue::Lvalue(Lvalue(&code[*cursor..u])));
+					*cursor = u;
+					*expecting = Expecting::Operator;
 				}
 			}
 			State::ParsingExpression => {}
 		}
 	};
 
-	fn sustache(operators: &mut Vec<Operator>, operands: &mut Vec<Rvalue>) {
+	fn evaluate_last_operator(operators: &mut Vec<Operator>, operands: &mut Vec<Rvalue>) {
 		let last = operators.pop().unwrap();
-		match last {
+		match dbg!(last) {
 			Operator::BinaryOp(op) => {
 				let rhs = operands.pop().unwrap();
 				let lhs = operands.pop().unwrap();
@@ -230,11 +224,10 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 	
 	let mut state = State::ParsingExpression;
 	let mut operators = Vec::<Operator>::new();
-	let mut actual_operators_count = 0;
 	let mut operands = Vec::new();
 	let mut cursor = 0;
 	for (u, grapheme) in code.grapheme_indices(true) {
-		sustalache(&mut state, &mut operands, &mut cursor, Some((u,  grapheme)));
+		try_push_operand(&mut state, &mut expecting, &mut operands, &mut cursor, u, not_variable(grapheme));
 		if let State::ParsingExpression = state {
 			cursor = u;
 			let mut operator = None;
@@ -255,30 +248,28 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 				
 				"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"
 				=> state = State::ParsingFloatLiteral,
-				_ => state = State::ParsingLvalueLiteral,
+				_ => state = State::ParsingLvalue,
 			}
-			println!("{:?} {:?} {:?}", state, operands.len(), actual_operators_count);
-			if let State::ParsingFloatLiteral | State::ParsingLvalueLiteral = state {
-				if operands.len() > actual_operators_count {
-					break;
-				}
+			if matches!(state, State::ParsingFloatLiteral|State::ParsingLvalue) {
+				if !matches!(expecting, Expecting::Operand) { break }
 			}
 			if let Some(operator) = operator {
-				if matches!(operator, Operator::BinaryOp(..)) {
-					actual_operators_count += 1;
+				if !matches!(operator, Operator::Lparen|Operator::Rparen) {
+					if !matches!(expecting, Expecting::Operator) { break }
+					expecting = Expecting::Operand;
 				}
 				if !matches!(operator, Operator::Lparen) {
 					while let Some(last) = operators.last() {
 						if matches!(operator, Operator::Rparen) {
 							if !matches!(last, Operator::Lparen) {
-								sustache(&mut operators, &mut operands);
+								evaluate_last_operator(&mut operators, &mut operands);
 							} else {
 								operators.pop();
 								break;
 							}
 						} else {
 							if operator.get_priority() <= last.get_priority() {
-								sustache(&mut operators, &mut operands);
+								evaluate_last_operator(&mut operators, &mut operands);
 							} else {
 								break
 							}
@@ -291,12 +282,14 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 			}
 		}
 	}
-	if operands.len() > actual_operators_count {
-		sustalache(&mut state, &mut operands, &mut cursor, None);
+	if matches!(expecting, Expecting::Operand) {
+		try_push_operand(&mut state, &mut expecting, &mut operands, &mut cursor, code.len(), true);
 	}
 	while !operators.is_empty() {
-		sustache(&mut operators, &mut operands);
+		evaluate_last_operator(&mut operators, &mut operands);
 	}
+	dbg!(&operands);
+	assert!(operands.len() == 1);
 	(operands.pop().unwrap(), &code[cursor..])
 }
 
@@ -352,8 +345,6 @@ fn parse_second_step_lvalue<'a>(code: &'a str, lvalue: Lvalue<'a>) -> Instructiu
 			}
 		}
 		if let State::ReadingInstruction(i) = &mut state {
-			println!("{:?}", code);
-			println!("{:?}", grapheme);
 			match i {
 				0 => assert!(grapheme == "<"),
 				1 => assert!(grapheme == "-"),
@@ -439,9 +430,7 @@ fn parse_second_step_pentru<'a>(code: &'a str) -> Instructiune<'a> {
 }
 
 fn parse_second_step_daca(code: &str) -> Instructiune {
-	println!("{:?}", code);
 	let (rvalue, code) = parse_expression(code);
-	println!("{:?}", code);
 	
 	let graphemes = code.grapheme_indices(true)
 		.skip_while(|x| x.1 == " ");
@@ -490,19 +479,19 @@ fn parse_first_step<'a>(code: &'a str) -> Instructiune<'a> {
 
 fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent: usize) -> &'a str {
 	let mut cursor = 0;
-	let mut lines = code.split_terminator("\n");
+	let mut lines = code.split("\n");
 	while let Some(line) = lines.next() {
-		cursor += line.len() + "\n".len();
 		if line != "" {
 			let current_indent = line
 				.graphemes(true)
 				.take_while(|x| *x == "\t")
 				.count();
-			let line = &line[current_indent*"\t".len()..];
-			println!("{:?}", line);
 			if current_indent != indent {
 				break;
 			} else {
+				cursor += line.len() + "\n".len();
+				let line = &line[current_indent*"\t".len()..];
+				println!("{:?}", line);
 				let mut instruction = dbg!(parse_first_step(line));
 				match &mut instruction {
 					Instructiune::DacaAtunciAltfel(_, instructions, _)
@@ -511,7 +500,8 @@ fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent
 					| Instructiune::RepetaPanaCand(instructions, _)
 					=> {
 						code = parse(&code[cursor..], instructions, indent+1);
-						lines = code.split_terminator("\n");
+						cursor = 0;
+						lines = code.split("\n");
 					}
 					Instructiune::Atribuire(..)
 					| Instructiune::Interschimbare(..)
@@ -525,6 +515,7 @@ fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent
 			}
 		}
 	}
+	// if lines.next().is_none() { cursor -= "\n".len() }
 	&code[cursor..]
 }
 
@@ -563,6 +554,7 @@ fn main() {
 
 	let mut program = Vec::new();
 	parse(&code, &mut program, 0);
+	dbg!(&program);
 	let mut variables = HashMap::new();
 	execute(&mut variables, &program);
 }

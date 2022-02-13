@@ -5,6 +5,8 @@ use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 use std::collections::HashMap;
 
+fn is_whitespace(x: &(usize, &str)) -> bool { x.1 == " "  }
+
 #[derive(Debug)]
 struct Lvalue<'a> (&'a str);
 
@@ -154,11 +156,12 @@ fn not_variable(grapheme: &str) -> bool {
 		|"<"|">"|"="
 		|"-"|"+"|"*"|"/"|"%"
 		|"("|")"
+		|","
 	);
 }
 
 
-fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
+fn parse_rvalue<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 	#[derive(Debug)]
 	enum Operator { Lparen, Rparen, UnaryOp(UnaryOp), BinaryOp(BinaryOp) }
 	impl Operator {
@@ -175,6 +178,7 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 					BinaryOp::Sub => 2,
 					BinaryOp::Mul => 3,
 					BinaryOp::Div => 3,
+					BinaryOp::Rem => 3,
 					_ => todo!(),
 				}
 			}
@@ -212,7 +216,7 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 
 	fn evaluate_last_operator(operators: &mut Vec<Operator>, operands: &mut Vec<Rvalue>) {
 		let last = operators.pop().unwrap();
-		match dbg!(last) {
+		match last {
 			Operator::BinaryOp(op) => {
 				let rhs = operands.pop().unwrap();
 				let lhs = operands.pop().unwrap();
@@ -233,7 +237,6 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 			let mut operator = None;
 			match grapheme {
 				" " => {}
-				// "," => { break }
 				"(" => operator = Some(Operator::Lparen),
 				")" => operator = Some(Operator::Rparen),
 				
@@ -241,6 +244,7 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 				"-" => operator = Some(Operator::BinaryOp(BinaryOp::Sub)),
 				"*" => operator = Some(Operator::BinaryOp(BinaryOp::Mul)),
 				"/" => operator = Some(Operator::BinaryOp(BinaryOp::Div)),
+				"%" => operator = Some(Operator::BinaryOp(BinaryOp::Rem)),
 				
 				"=" => operator = Some(Operator::BinaryOp(BinaryOp::Equ)),
 				"<" => operator = Some(Operator::BinaryOp(BinaryOp::Lt)),
@@ -288,166 +292,211 @@ fn parse_expression<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
 	while !operators.is_empty() {
 		evaluate_last_operator(&mut operators, &mut operands);
 	}
-	dbg!(&operands);
 	assert!(operands.len() == 1);
 	(operands.pop().unwrap(), &code[cursor..])
 }
 
-fn parse_second_step_scrie<'a>(code: &'a str) -> Instructiune<'a> {
-	Instructiune::Scrie(
-		code.split(",").map(|code| parse_expression(code).0).collect(),
-	)
+fn parse_second_step_scrie<'a>(mut code: &'a str) -> Instructiune<'a> {
+	let mut rvalues = Vec::new();
+	let mut done = false;
+	while !done {
+		let (rvalue, new_code) = parse_rvalue(code);
+		rvalues.push(rvalue);
+		code = new_code;
+		let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+		match graphemes.next() {
+			Some((i, ",")) => code = &code[i+",".len()..],
+			None => done = true,
+			_ => panic!(),
+		}
+	}
+	Instructiune::Scrie(rvalues)
 }
 
 fn parse_lvalue<'a>(code: &'a str) -> (Lvalue, &'a str) {
-	enum State {
-		SkippingWhitespace,
-		ReadingLvalue(usize),
-	}
-	let mut state = State::SkippingWhitespace;
-	for (u, grapheme) in code.grapheme_indices(true) {
-		if let State::SkippingWhitespace = state {
-			if grapheme != " " {
-				state = State::ReadingLvalue(u);
-			}
-		}
-		if let State::ReadingLvalue(start) = state {
-			if not_variable(grapheme) {
-				return (Lvalue(&code[start..u-grapheme.len()]), &code[u-grapheme.len()..]);
-			}
-		}
-	}
-	if let State::ReadingLvalue(start) = state {
-		(Lvalue(&code[start..]), &code[start..start])
-	} else {
-		panic!()
-	}
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	let next = graphemes.next().unwrap();
+	
+	let cursor = next.0;
+	let graphemes = iter::once(next).chain(graphemes);
+	let mut graphemes = graphemes.skip_while(|x| !not_variable(x.1));
+	
+	let end = 
+		if let Some((end, _)) = graphemes.next() { end }
+		else { code.len() };
+	
+	(Lvalue(&code[cursor..end]), &code[end..])
 }
 
-fn parse_second_step_citeste<'a>(code: &'a str) -> Instructiune<'a> {
-	Instructiune::Citeste(
-		code.split(",").map(|code| parse_lvalue(code).0).collect(),
-	)
+fn parse_second_step_citeste<'a>(mut code: &'a str) -> Instructiune<'a> {
+	let mut lvalues = Vec::new();
+	let mut done = false;
+	while !done {
+		let (lvalue, new_code) = parse_lvalue(code);
+		lvalues.push(lvalue);
+		code = new_code;
+		let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+		match graphemes.next() {
+			Some((i, ",")) => code = &code[i+",".len()..],
+			None => done = true,
+			_ => panic!(),
+		}
+	}
+	Instructiune::Citeste(lvalues)
 }
 
 fn parse_second_step_lvalue<'a>(code: &'a str, lvalue: Lvalue<'a>) -> Instructiune<'a> {
-	enum State {
-		SkippingWhitespace,
-		ReadingInstruction(u32),
-	}
-	let mut state = State::SkippingWhitespace;
-	let mut last_grapheme = "";
-	let mut cursor = 0;
-	for (u, grapheme) in code.grapheme_indices(true) {
-		if let State::SkippingWhitespace = state {
-			if grapheme != " " {
-				state = State::ReadingInstruction(0);
-			}
-		}
-		if let State::ReadingInstruction(i) = &mut state {
-			match i {
-				0 => assert!(grapheme == "<"),
-				1 => assert!(grapheme == "-"),
-				2 => {
-					cursor = u;
-					last_grapheme = grapheme;
-					break;
-				}
-				_ => panic!(),
-			}
-			*i += 1;
-		}
-	}
-	if last_grapheme == ">" {
-		cursor += last_grapheme.len();
-		let other_lvalue = parse_lvalue(&code[cursor..]).0;
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	assert!(matches!(graphemes.next(), Some((_, "<"))));
+	assert!(matches!(graphemes.next(), Some((_, "-"))));
+	let next = graphemes.next().unwrap();
+	if next.1 == ">" {
+		let other_lvalue = parse_lvalue(&code[next.0+next.1.len()..]).0;
 		Instructiune::Interschimbare(lvalue, other_lvalue)
 	} else {
-		let rvalue = parse_expression(&code[cursor..]).0;
+		let rvalue = parse_rvalue(&code[next.0..]).0;
 		Instructiune::Atribuire(lvalue, rvalue)
 	}
 }
 
 fn parse_second_step_pentru<'a>(code: &'a str) -> Instructiune<'a> {
-	enum State {
-		SkippingWhitespace,
-		Reading(usize),
-	}
 	let (lvalue, code) = parse_lvalue(code);
-	let mut state = State::SkippingWhitespace;
-	let mut cursor = 0;
-	let mut last_grapheme_len = 0;
-	for (u, grapheme) in code.grapheme_indices(true) {
-		if let State::SkippingWhitespace = state {
-			if grapheme != " " { state = State::Reading(0) }
-		}
-		match &mut state {
-			State::Reading(i) => {
-				match i {
-					0 => assert!(grapheme == "<"),
-					1 => {
-						assert!(grapheme == "-");
-						cursor = u;
-						last_grapheme_len = grapheme.len();
-						break;
-					}
-					_ => panic!(),
-				}
-				*i += 1;
-			}
-			_ => {}
-		}
-	}
-	let code = &code[cursor+last_grapheme_len..];
-	let (start, code) = parse_expression(code);
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	assert!(matches!(graphemes.next(), Some((_, "<"))));
+	assert!(matches!(graphemes.next(), Some((_, "-"))));
+	let next = graphemes.next().unwrap();
+	let code = &code[next.0..];
+	let (start, code) = parse_rvalue(code);
 	
-	let mut graphemes = code.grapheme_indices(true)
-		.skip_while(|x| x.1 == " ");
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
 	let next = graphemes.next().unwrap();
 	assert!(next.1 == ",");
 	
-	cursor = next.0 + next.1.len();
-	let code = &code[cursor..];
-	let (end, code) = parse_expression(code);
-
-	let graphemes = code.grapheme_indices(true)
-		.skip_while(|x| x.1 == " ");
-
-	for (i, (u, grapheme)) in izip!(0.., graphemes) {
-		match i {
-			0 => assert!(grapheme == "e"),
-			1 => assert!(grapheme == "x"),
-			2 => assert!(grapheme == "e"),
-			3 => assert!(grapheme == "c"),
-			4 => assert!(grapheme == "u"),
-			5 => assert!(grapheme == "t"),
-			6 => assert!(grapheme == "a"),
-			_ => assert!(grapheme == " "),
-		}
-	}
-
-	Instructiune::PentruExecuta(lvalue, start, end, None, Vec::new())
+	let code = &code[next.0 + next.1.len()..];
+	let (end, code) = parse_rvalue(code);
+	
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	
+	let mut next = graphemes.next().unwrap();
+	let (increment, mut graphemes) = if next.1 == "," {
+		let code = &code[next.0 + next.1.len()..];
+		let (increment, code) = parse_rvalue(code);
+		let mut graphemes = code.grapheme_indices(true)
+			.skip_while(is_whitespace);
+		next = graphemes.next().unwrap();
+		(Some(increment), graphemes)
+	} else { (None, graphemes) };
+	
+	assert!(next.1 == "e");
+	assert!(matches!(graphemes.next(), Some((_, "x"))));
+	assert!(matches!(graphemes.next(), Some((_, "e"))));
+	assert!(matches!(graphemes.next(), Some((_, "c"))));
+	assert!(matches!(graphemes.next(), Some((_, "u"))));
+	assert!(matches!(graphemes.next(), Some((_, "t"))));
+	assert!(matches!(graphemes.next(), Some((_, "a"))));
+	
+	let mut graphemes = graphemes.skip_while(is_whitespace);
+	assert!(graphemes.next().is_none());
+	
+	Instructiune::PentruExecuta(lvalue, start, end, increment, Vec::new())
 }
 
 fn parse_second_step_daca(code: &str) -> Instructiune {
-	let (rvalue, code) = parse_expression(code);
+	let (rvalue, code) = parse_rvalue(code);
 	
-	let graphemes = code.grapheme_indices(true)
-		.skip_while(|x| x.1 == " ");
-
-	for (i, (u, grapheme)) in izip!(0.., graphemes) {
-		match i {
-			0 => assert!(grapheme == "a"),
-			1 => assert!(grapheme == "t"),
-			2 => assert!(grapheme == "u"),
-			3 => assert!(grapheme == "n"),
-			4 => assert!(grapheme == "c"),
-			5 => assert!(grapheme == "i"),
-			_ => assert!(grapheme == " "),
-		}
-	}
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	
+	assert!(matches!(graphemes.next(), Some((_, "a"))));
+	assert!(matches!(graphemes.next(), Some((_, "t"))));
+	assert!(matches!(graphemes.next(), Some((_, "u"))));
+	assert!(matches!(graphemes.next(), Some((_, "n"))));
+	assert!(matches!(graphemes.next(), Some((_, "c"))));
+	assert!(matches!(graphemes.next(), Some((_, "i"))));
+	
+	let mut graphemes = graphemes.skip_while(is_whitespace);
+	
+	assert!(graphemes.next().is_none());
 
 	Instructiune::DacaAtunciAltfel(rvalue, Vec::new(), None)
+}
+
+fn parse_second_step_cat_timp<'a>(code: &'a str) -> Instructiune<'a> {
+	let mut graphemes = code.grapheme_indices(true);
+	assert!(matches!(graphemes.next(), Some((_, " "))));
+	assert!(matches!(graphemes.next(), Some((_, "t"))));
+	assert!(matches!(graphemes.next(), Some((_, "i"))));
+	assert!(matches!(graphemes.next(), Some((_, "m"))));
+	assert!(matches!(graphemes.next(), Some((_, "p"))));
+	let next = graphemes.next().unwrap();
+	assert!(next.1 == " ");
+	
+	let (condition, code) = parse_rvalue(&code[next.0..]);
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	assert!(matches!(graphemes.next(), Some((_, "e"))));
+	assert!(matches!(graphemes.next(), Some((_, "x"))));
+	assert!(matches!(graphemes.next(), Some((_, "e"))));
+	assert!(matches!(graphemes.next(), Some((_, "c"))));
+	assert!(matches!(graphemes.next(), Some((_, "u"))));
+	assert!(matches!(graphemes.next(), Some((_, "t"))));
+	assert!(matches!(graphemes.next(), Some((_, "a"))));
+	
+	let mut graphemes = graphemes.skip_while(is_whitespace);
+	assert!(graphemes.next().is_none());
+	
+	Instructiune::CatTimpExecuta(condition, Vec::new())
+}
+
+fn parse_altfel(code: &str) -> bool {
+	let mut graphemes = code.grapheme_indices(true);
+	let mut answer = true;
+	answer &= matches!(graphemes.next(), Some((_, "a")));
+	answer &= matches!(graphemes.next(), Some((_, "l")));
+	answer &= matches!(graphemes.next(), Some((_, "t")));
+	answer &= matches!(graphemes.next(), Some((_, "f")));
+	answer &= matches!(graphemes.next(), Some((_, "e")));
+	answer &= matches!(graphemes.next(), Some((_, "l")));
+	
+	let mut graphemes = graphemes.skip_while(is_whitespace);
+	answer &= graphemes.next().is_none();
+	
+	answer
+}
+
+fn parse_repeta(code: &str) -> bool {
+	let mut graphemes = code.grapheme_indices(true);
+	let mut answer = true;
+	answer &= matches!(graphemes.next(), Some((_, "r")));
+	answer &= matches!(graphemes.next(), Some((_, "e")));
+	answer &= matches!(graphemes.next(), Some((_, "p")));
+	answer &= matches!(graphemes.next(), Some((_, "e")));
+	answer &= matches!(graphemes.next(), Some((_, "t")));
+	answer &= matches!(graphemes.next(), Some((_, "a")));
+	
+	let mut graphemes = graphemes.skip_while(is_whitespace);
+	answer &= graphemes.next().is_none();
+	
+	answer
+}
+
+fn parse_pana_cand<'a>(code: &'a str, instructions: Vec<Instructiune<'a>>) -> Instructiune<'a> {
+	let mut graphemes = code.grapheme_indices(true);
+	assert!(matches!(graphemes.next(), Some((_, "p"))));
+	assert!(matches!(graphemes.next(), Some((_, "a"))));
+	assert!(matches!(graphemes.next(), Some((_, "n"))));
+	assert!(matches!(graphemes.next(), Some((_, "a"))));
+	assert!(matches!(graphemes.next(), Some((_, " "))));
+	assert!(matches!(graphemes.next(), Some((_, "c"))));
+	assert!(matches!(graphemes.next(), Some((_, "a"))));
+	assert!(matches!(graphemes.next(), Some((_, "n"))));
+	assert!(matches!(graphemes.next(), Some((_, "d"))));
+	let next = graphemes.next().unwrap();
+	
+	let code = &code[next.0..];
+	let (condition, code) = parse_rvalue(code);
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	assert!(graphemes.next().is_none());
+	
+	Instructiune::RepetaPanaCand(instructions, condition)
 }
 
 fn parse_first_step<'a>(code: &'a str) -> Instructiune<'a> {
@@ -464,10 +513,12 @@ fn parse_first_step<'a>(code: &'a str) -> Instructiune<'a> {
 		panic!()
 	};
 	match dbg!(read_first_step()) {
-		"pentru" =>
-			parse_second_step_pentru(&code[cursor..]),
 		"daca" =>
 			parse_second_step_daca(&code[cursor..]),
+		"cat" =>
+			parse_second_step_cat_timp(&code[cursor..]),
+		"pentru" =>
+			parse_second_step_pentru(&code[cursor..]),
 		"scrie" =>
 			parse_second_step_scrie(&code[cursor..]),
 		"citeste" =>
@@ -478,6 +529,8 @@ fn parse_first_step<'a>(code: &'a str) -> Instructiune<'a> {
 }
 
 fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent: usize) -> &'a str {
+	enum Expecting<'a> { Anything, PanaCand(Vec<Instructiune<'a>>) }
+	let mut expecting = Expecting::Anything;
 	let mut cursor = 0;
 	let mut lines = code.split("\n");
 	while let Some(line) = lines.next() {
@@ -492,30 +545,56 @@ fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent
 				cursor += line.len() + "\n".len();
 				let line = &line[current_indent*"\t".len()..];
 				println!("{:?}", line);
-				let mut instruction = dbg!(parse_first_step(line));
-				match &mut instruction {
-					Instructiune::DacaAtunciAltfel(_, instructions, _)
-					| Instructiune::CatTimpExecuta(_, instructions)
-					| Instructiune::PentruExecuta(_, _, _, _, instructions)
-					| Instructiune::RepetaPanaCand(instructions, _)
-					=> {
-						code = parse(&code[cursor..], instructions, indent+1);
-						cursor = 0;
-						lines = code.split("\n");
+				expecting = match expecting {
+					Expecting::Anything => {
+						if parse_altfel(line) {
+							if let Some(Instructiune::DacaAtunciAltfel(_, _, instructions)) = instructions.last_mut() {
+								assert!(instructions.is_none());
+								*instructions = Some({
+									let mut instructions = Vec::new();
+									code = parse(&code[cursor..], &mut instructions, indent+1);
+									cursor = 0;
+									lines = code.split("\n");
+									instructions
+								});
+							} else { panic!() }
+							Expecting::Anything
+						} else if parse_repeta(line) {
+							let mut instructions = Vec::new();
+							code = parse(&code[cursor..], &mut instructions, indent+1);
+							cursor = 0;
+							lines = code.split("\n");
+							Expecting::PanaCand(instructions)
+						} else {
+							let mut instruction = dbg!(parse_first_step(line));
+							match &mut instruction {
+								Instructiune::DacaAtunciAltfel(_, instructions, _)
+								| Instructiune::CatTimpExecuta(_, instructions)
+								| Instructiune::PentruExecuta(_, _, _, _, instructions)
+								| Instructiune::RepetaPanaCand(instructions, _)
+								=> {
+									code = parse(&code[cursor..], instructions, indent+1);
+									cursor = 0;
+									lines = code.split("\n");
+								}
+								Instructiune::Atribuire(..)
+								| Instructiune::Interschimbare(..)
+								| Instructiune::Scrie(..)
+								| Instructiune::Citeste(..)
+								=> {} // do nothing 
+							}
+							instructions.push(instruction);
+							Expecting::Anything
+						}
 					}
-					Instructiune::Atribuire(..)
-					| Instructiune::Interschimbare(..)
-					| Instructiune::Scrie(..)
-					| Instructiune::Citeste(..)
-					=> {
-						// do nothing
+					Expecting::PanaCand(pana_cand_instructions) => {
+						instructions.push(parse_pana_cand(line, pana_cand_instructions));
+						Expecting::Anything
 					}
 				}
-				instructions.push(instruction);
 			}
 		}
 	}
-	// if lines.next().is_none() { cursor -= "\n".len() }
 	&code[cursor..]
 }
 

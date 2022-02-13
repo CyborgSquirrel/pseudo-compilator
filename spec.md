@@ -1,7 +1,5 @@
 # TODO
-- fix the expression parser
-pentru i<-1,10 executa
-	scrie i
+scrie test
 
 All the variables will be f32.
 Character literals specified between ' '.

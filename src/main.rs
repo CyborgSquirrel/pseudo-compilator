@@ -11,70 +11,116 @@ fn is_whitespace(x: &(usize, &str)) -> bool { x.1 == " "  }
 struct Lvalue<'a> (&'a str);
 
 #[derive(Debug)]
-enum UnaryOp { Pos, Neg, Whole }
+enum FloatUnaryOp { Pos, Neg, Whole }
 
 #[derive(Debug)]
-enum BinaryOp {
-	Add, Sub, Mul, Div, Rem,
+enum FloatBinaryOp { Add, Sub, Mul, Div, Rem }
+
+#[derive(Debug)]
+enum FloatRvalue<'a> {
+	Literal(f32),
+	Lvalue(Lvalue<'a>),
+	Unary(FloatUnaryOp, Box<FloatRvalue<'a>>),
+	Binary(FloatBinaryOp, Box<FloatRvalue<'a>>, Box<FloatRvalue<'a>>),
+}
+
+#[derive(Debug)]
+enum ScrieParam<'a> {
+	Rvalue(FloatRvalue<'a>),
+	StringLiteral(&'a str),
+	CharLiteral(&'a str),
+}
+
+#[derive(Debug)]
+enum BoolFloatBinaryOp {
 	Equ, Lt, Gt, Lte, Gte,
-	Or, And,
 	Divides,
 }
 
 #[derive(Debug)]
-enum Rvalue<'a> {
-	Literal(f32),
-	Lvalue(Lvalue<'a>),
-	Unary(UnaryOp, Box<Rvalue<'a>>),
-	Binary(BinaryOp, Box<Rvalue<'a>>, Box<Rvalue<'a>>),
+enum BoolBoolBinaryOp {
+	And, Or,
+}
+
+#[derive(Debug)]
+enum BoolRvalue<'a> {
+	BoolFloatBinaryOp(BoolFloatBinaryOp, FloatRvalue<'a>, FloatRvalue<'a>),
+	BoolBoolBinaryOp(BoolBoolBinaryOp, Box<BoolRvalue<'a>>, Box<BoolRvalue<'a>>),
+}
+
+#[derive(Debug)]
+enum BoolUnaryOp {}
+
+#[derive(Debug)]
+enum BoolBinaryOp {
+	BoolFloatBinaryOp(BoolFloatBinaryOp),
+	BoolBoolBinaryOp(BoolBoolBinaryOp),
 }
 
 #[derive(Debug)]
 enum Instructiune<'a> {
-	Atribuire(Lvalue<'a>, Rvalue<'a>),
+	Atribuire(Lvalue<'a>, FloatRvalue<'a>),
 	Interschimbare(Lvalue<'a>, Lvalue<'a>),
-	Scrie(Vec<Rvalue<'a>>),
+	Scrie(Vec<ScrieParam<'a>>),
 	Citeste(Vec<Lvalue<'a>>),
-	DacaAtunciAltfel(Rvalue<'a>, Vec<Instructiune<'a>>, Option<Vec<Instructiune<'a>>>),
-	CatTimpExecuta(Rvalue<'a>, Vec<Instructiune<'a>>),
-	PentruExecuta(Lvalue<'a>, Rvalue<'a>, Rvalue<'a>, Option<Rvalue<'a>>, Vec<Instructiune<'a>>),
-	RepetaPanaCand(Vec<Instructiune<'a>>, Rvalue<'a>),
+	DacaAtunciAltfel(BoolRvalue<'a>, Vec<Instructiune<'a>>, Option<Vec<Instructiune<'a>>>),
+	CatTimpExecuta(BoolRvalue<'a>, Vec<Instructiune<'a>>),
+	PentruExecuta(Lvalue<'a>, FloatRvalue<'a>, FloatRvalue<'a>, Option<FloatRvalue<'a>>, Vec<Instructiune<'a>>),
+	RepetaPanaCand(Vec<Instructiune<'a>>, BoolRvalue<'a>),
 }
 
-fn evaluate(
+fn float_evaluate(
 	variables: &HashMap<&str, f32>,
-	rvalue: &Rvalue,
+	rvalue: &FloatRvalue,
 ) -> f32 {
-	fn bool_to_float(x: bool) -> f32 { if x { 1f32 } else { 0f32 } }
-	fn float_to_bool(x: f32) -> bool { x == 1f32 }
 	match rvalue {
-		Rvalue::Literal(x) => *x,
-		Rvalue::Lvalue(x) => *variables.get(x.0).unwrap(),
-		Rvalue::Unary(op, x) => {
-			let x = evaluate(variables, x);
+		FloatRvalue::Literal(x) => *x,
+		FloatRvalue::Lvalue(x) => *variables.get(x.0).unwrap(),
+		FloatRvalue::Unary(op, x) => {
+			let x = float_evaluate(variables, x);
 			match *op {
-				UnaryOp::Pos => x,
-				UnaryOp::Neg => -x,
-				UnaryOp::Whole => x.floor(),
+				FloatUnaryOp::Pos => x,
+				FloatUnaryOp::Neg => -x,
+				FloatUnaryOp::Whole => x.floor(),
 			}
 		}
-		Rvalue::Binary(op, x, y) => {
-			let x = evaluate(variables, x);
-			let y = evaluate(variables, y);
+		FloatRvalue::Binary(op, x, y) => {
+			let x = float_evaluate(variables, x);
+			let y = float_evaluate(variables, y);
 			match *op {
-				BinaryOp::Add => x+y,
-				BinaryOp::Sub => x-y,
-				BinaryOp::Mul => x*y,
-				BinaryOp::Div => x/y,
-				BinaryOp::Rem => ((x as i32) % (y as i32)) as f32,
-				BinaryOp::Equ => bool_to_float(x == y),
-				BinaryOp::Lt => bool_to_float(x < y),
-				BinaryOp::Gt => bool_to_float(x > y),
-				BinaryOp::Lte => bool_to_float(x <= y),
-				BinaryOp::Gte => bool_to_float(x >= y),
-				BinaryOp::And => bool_to_float(float_to_bool(x) && float_to_bool(y)),
-				BinaryOp::Or => bool_to_float(float_to_bool(x) || float_to_bool(y)),
-				BinaryOp::Divides => bool_to_float((y as i32) % (x as i32) == 0),
+				FloatBinaryOp::Add => x+y,
+				FloatBinaryOp::Sub => x-y,
+				FloatBinaryOp::Mul => x*y,
+				FloatBinaryOp::Div => x/y,
+				FloatBinaryOp::Rem => ((x as i32) % (y as i32)) as f32,
+			}
+		}
+	}
+}
+
+fn bool_evaluate<'a>(
+	variables: &HashMap<&str, f32>,
+	rvalue: &BoolRvalue,
+) -> bool {
+	match rvalue {
+		BoolRvalue::BoolBoolBinaryOp(op, lhs, rhs) => {
+			let lhs = bool_evaluate(variables, lhs);
+			let rhs = bool_evaluate(variables, rhs);
+			match op {
+				BoolBoolBinaryOp::And => lhs && rhs,
+				BoolBoolBinaryOp::Or => lhs || rhs,
+			}
+		}
+		BoolRvalue::BoolFloatBinaryOp(op, lhs, rhs) => {
+			let lhs = float_evaluate(variables, lhs);
+			let rhs = float_evaluate(variables, rhs);
+			match op {
+				BoolFloatBinaryOp::Equ => lhs == rhs,
+				BoolFloatBinaryOp::Lt => lhs < rhs,
+				BoolFloatBinaryOp::Gt => lhs > rhs,
+				BoolFloatBinaryOp::Lte => lhs <= rhs,
+				BoolFloatBinaryOp::Gte => lhs >= rhs,
+				BoolFloatBinaryOp::Divides => (lhs as i32) % (rhs as i32) == 0,
 			}
 		}
 	}
@@ -88,7 +134,7 @@ fn execute<'a>(
 	for instruction in instructions {
 		match instruction {
 			Instructiune::Atribuire(lvalue, rvalue) => {
-				variables.insert(lvalue.0, evaluate(variables, rvalue));
+				variables.insert(lvalue.0, float_evaluate(variables, rvalue));
 			}
 			Instructiune::Interschimbare(lt_lvalue, rt_lvalue) => {
 				let lt_ptr = variables.get_mut(lt_lvalue.0).unwrap() as *mut f32;
@@ -97,10 +143,16 @@ fn execute<'a>(
 					std::ptr::swap(lt_ptr, rt_ptr);
 				}
 			}
-			Instructiune::Scrie(rvalues) => {
-				for rvalue in rvalues {
-					print!("{} ", evaluate(variables, rvalue));
+			Instructiune::Scrie(params) => {
+				for param in params {
+					let value = match param {
+						ScrieParam::Rvalue(rvalue) => float_evaluate(variables, rvalue).to_string(),
+						ScrieParam::CharLiteral(chr) => chr.to_string(),
+						ScrieParam::StringLiteral(string) => string.to_string(),
+					};
+					print!("{}", value);
 				}
+				print!("\n");
 			}
 			Instructiune::Citeste(lvalues) => {
 				let mut input = String::new();
@@ -111,7 +163,7 @@ fn execute<'a>(
 				}
 			}
 			Instructiune::DacaAtunciAltfel(conditie, atunci, altfel) => {
-				if evaluate(variables, conditie) == 1f32 {
+				if bool_evaluate(variables, conditie) {
 					execute(variables, &atunci);
 				} else {
 					if let Some(altfel) = altfel {
@@ -120,16 +172,16 @@ fn execute<'a>(
 				}
 			}
 			Instructiune::CatTimpExecuta(conditie, executa) => {
-				while evaluate(variables, conditie) == 1f32 {
+				while bool_evaluate(variables, conditie) {
 					execute(variables, executa);
 				}
 			}
 			Instructiune::PentruExecuta(contor, start, stop, increment, executa) => {
-				variables.insert(contor.0, evaluate(variables, start));
-				let stop = evaluate(variables, stop);
+				variables.insert(contor.0, float_evaluate(variables, start));
+				let stop = float_evaluate(variables, stop);
 				let increment = increment
 					.as_ref()
-					.map(|x| evaluate(variables, x))
+					.map(|x| float_evaluate(variables, x))
 					.unwrap_or(1f32);
 				while *variables.get(contor.0).unwrap() != stop {
 					execute(variables, executa);
@@ -141,7 +193,7 @@ fn execute<'a>(
 			}
 			Instructiune::RepetaPanaCand(repeta, conditie) => {
 				execute(variables, repeta);
-				while evaluate(variables, conditie) != 1f32 {
+				while !bool_evaluate(variables, conditie) {
 					execute(variables, repeta);
 				}
 			}
@@ -156,152 +208,374 @@ fn not_variable(grapheme: &str) -> bool {
 		|"<"|">"|"="
 		|"-"|"+"|"*"|"/"|"%"
 		|"("|")"
-		|","
+		|","|";"
+		|"\""|"'"
 	);
 }
 
-
-fn parse_rvalue<'a>(code: &'a str) -> (Rvalue<'a>, &'a str) {
-	#[derive(Debug)]
-	enum Operator { Lparen, Rparen, UnaryOp(UnaryOp), BinaryOp(BinaryOp) }
-	impl Operator {
-		fn get_priority(&self) -> u32 {
-			match self {
-				Operator::Lparen => 0,
-				Operator::Rparen => panic!(),
-				Operator::UnaryOp(op) => todo!(),
-				Operator::BinaryOp(op) => match op {
-					BinaryOp::Lt => 1,
-					BinaryOp::Gt => 1,
-					BinaryOp::Equ => 1,
-					BinaryOp::Add => 2,
-					BinaryOp::Sub => 2,
-					BinaryOp::Mul => 3,
-					BinaryOp::Div => 3,
-					BinaryOp::Rem => 3,
-					_ => todo!(),
-				}
-			}
+#[derive(Debug)]
+enum Token <UnaryOp, BinaryOp> { Lparen, Rparen, UnaryOp(UnaryOp), BinaryOp(BinaryOp) }
+fn float_get_priority(token: &Token<FloatUnaryOp, FloatBinaryOp>) -> u32 {
+	match token {
+		Token::Lparen => 0,
+		Token::Rparen => panic!(),
+		Token::UnaryOp(op) => todo!(),
+		Token::BinaryOp(op) => match op {
+			FloatBinaryOp::Add => 1,
+			FloatBinaryOp::Sub => 1,
+			FloatBinaryOp::Mul => 2,
+			FloatBinaryOp::Div => 2,
+			FloatBinaryOp::Rem => 2,
 		}
 	}
-	
-	#[derive(Debug)]
-	enum State { ParsingExpression, ParsingFloatLiteral, ParsingLvalue }
+}
+fn float_eval<'a>(token: Token<FloatUnaryOp, FloatBinaryOp>, lhs: FloatRvalue<'a>, rhs: FloatRvalue<'a>) -> FloatRvalue<'a> {
+	match token {
+		Token::Lparen => panic!(),
+		Token::Rparen => panic!(),
+		Token::BinaryOp(op) => {
+			FloatRvalue::Binary(op, Box::new(lhs), Box::new(rhs))
+		}
+		Token::UnaryOp(..) => todo!()
+	}
+}
 
-	#[derive(Debug)]
-	enum Expecting { Operator, Operand }
-	let mut expecting = Expecting::Operand;
+struct ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn> {
+	tokens: Vec<Token<UnaryOp, BinaryOp>>,
+	operands: Vec<Operand>,
+	expecting: Expecting,
+	get_priority: GetPriorityFn,
+	eval: EvalFn,
+}
 
-	let try_push_operand = |state: &mut State, expecting: &mut Expecting, operands: &mut Vec<Rvalue<'a>>, cursor: &mut usize, u: usize, should_push: bool| {
+enum Expecting {
+	Operand, Operator
+}
+
+impl<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
+ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
+where
+	GetPriorityFn: Fn(&Token<UnaryOp, BinaryOp>) -> u32,
+	EvalFn: Fn(Token<UnaryOp, BinaryOp>, Operand, Operand) -> Operand,
+	Operand: std::fmt::Debug,
+	UnaryOp: std::fmt::Debug,
+	BinaryOp: std::fmt::Debug,
+{
+	fn new(get_priority: GetPriorityFn, eval: EvalFn) -> Self {
+		Self {
+			tokens: Vec::new(),
+			operands: Vec::new(),
+			expecting: Expecting::Operand,
+			get_priority,
+			eval,
+		}
+	}
+	fn eval_binary_op(&mut self) {
+		let rhs = dbg!(&mut self.operands).pop().unwrap();
+		let lhs = self.operands.pop().unwrap();
+		let last = self.tokens.pop().unwrap();
+		self.operands.push((self.eval)(last, lhs, rhs));
+	}
+	fn push_token(&mut self, token: Token<UnaryOp, BinaryOp>) -> bool {
+		match dbg!(&token) {
+			Token::Lparen => { }
+			Token::Rparen => {
+				while let Some(last) = dbg!(&self.tokens).last() {
+					if !matches!(last, Token::Lparen) {
+						self.eval_binary_op();
+					} else {
+						self.tokens.pop();
+						break;
+					}
+				}
+			}
+			Token::BinaryOp(..) => {
+				if !matches!(self.expecting, Expecting::Operator) { return false }
+				self.expecting = Expecting::Operand;
+				while let Some(last) = self.tokens.last() {
+					if (self.get_priority)(&token) <= (self.get_priority)(last) {
+						self.eval_binary_op();
+					} else {
+						break;
+					}
+				}
+			}
+			Token::UnaryOp(..) => {
+				// assert!(matches!(self.expecting, Expecting::Operator));
+				todo!();
+			}
+		}
+		if !matches!(token, Token::Rparen) {
+			self.tokens.push(token);
+		}
+		true
+	}
+	fn push_operand(&mut self, operand: Operand) -> bool {
+		dbg!(&operand);
+		if !matches!(self.expecting, Expecting::Operand) { return false }
+		self.expecting = Expecting::Operator;
+		self.operands.push(operand);
+		true
+	}
+	fn finish(mut self) -> Operand {
+		while !self.tokens.is_empty() {
+			self.eval_binary_op();
+		}
+		assert!(self.operands.len() == 1);
+		self.operands.pop().unwrap()
+	}
+}
+
+fn parse_float_rvalue<'a>(code: &'a str) -> (FloatRvalue, &'a str) {
+	let mut expression_constructor = ExpressionConstructor::new(
+		float_get_priority,
+		float_eval,
+	);
+	enum State {
+		Unsure,
+		ParsingLvalue,
+		ParsingFloatLiteral,
+	}
+	let try_push_operand = |expression_constructor: &mut ExpressionConstructor<_,_,_,_,_>, state: &mut State, cursor: &mut usize, end: usize| {
 		match state {
-			State::ParsingFloatLiteral => {
-				if should_push {
-					*state = State::ParsingExpression;
-					operands.push(Rvalue::Literal(code[*cursor..u].parse().unwrap()));
-					*cursor = u;
-					*expecting = Expecting::Operator;
-				}
-			}
 			State::ParsingLvalue => {
-				if should_push {
-					*state = State::ParsingExpression;
-					operands.push(Rvalue::Lvalue(Lvalue(&code[*cursor..u])));
-					*cursor = u;
-					*expecting = Expecting::Operator;
-				}
+				*state = State::Unsure;
+				let result = expression_constructor.push_operand(FloatRvalue::Lvalue(Lvalue(&code[*cursor..end])));
+				if result { *cursor = end }
+				result
 			}
-			State::ParsingExpression => {}
+			State::ParsingFloatLiteral => {
+				*state = State::Unsure;
+				let result = expression_constructor.push_operand(FloatRvalue::Literal(code[*cursor..end].parse().unwrap()));
+				if result { *cursor = end }
+				result
+			}
+			_ => true,
 		}
 	};
-
-	fn evaluate_last_operator(operators: &mut Vec<Operator>, operands: &mut Vec<Rvalue>) {
-		let last = operators.pop().unwrap();
-		match last {
-			Operator::BinaryOp(op) => {
-				let rhs = operands.pop().unwrap();
-				let lhs = operands.pop().unwrap();
-				operands.push(Rvalue::Binary(op, Box::new(lhs), Box::new(rhs)));
-			}
-			_ => todo!(),
-		}
-	}
-	
-	let mut state = State::ParsingExpression;
-	let mut operators = Vec::<Operator>::new();
-	let mut operands = Vec::new();
+	let mut state = State::Unsure;
 	let mut cursor = 0;
-	for (u, grapheme) in code.grapheme_indices(true) {
-		try_push_operand(&mut state, &mut expecting, &mut operands, &mut cursor, u, not_variable(grapheme));
-		if let State::ParsingExpression = state {
-			cursor = u;
-			let mut operator = None;
+	let mut graphemes = code.grapheme_indices(true);
+	while let Some((i, grapheme)) = graphemes.next() {
+		if not_variable(grapheme) {
+			if !try_push_operand(&mut expression_constructor, &mut state, &mut cursor, i) { break }
+		}
+		if let State::Unsure = state {
+			cursor = i;
+			let mut token = None;
 			match grapheme {
 				" " => {}
-				"(" => operator = Some(Operator::Lparen),
-				")" => operator = Some(Operator::Rparen),
+				"," => break,
+				"(" => token = Some(Token::Lparen),
+				")" => token = Some(Token::Rparen),
 				
-				"+" => operator = Some(Operator::BinaryOp(BinaryOp::Add)),
-				"-" => operator = Some(Operator::BinaryOp(BinaryOp::Sub)),
-				"*" => operator = Some(Operator::BinaryOp(BinaryOp::Mul)),
-				"/" => operator = Some(Operator::BinaryOp(BinaryOp::Div)),
-				"%" => operator = Some(Operator::BinaryOp(BinaryOp::Rem)),
-				
-				"=" => operator = Some(Operator::BinaryOp(BinaryOp::Equ)),
-				"<" => operator = Some(Operator::BinaryOp(BinaryOp::Lt)),
-				">" => operator = Some(Operator::BinaryOp(BinaryOp::Gt)),
+				"+" => token = Some(Token::BinaryOp(FloatBinaryOp::Add)),
+				"-" => token = Some(Token::BinaryOp(FloatBinaryOp::Sub)),
+				"*" => token = Some(Token::BinaryOp(FloatBinaryOp::Mul)),
+				"/" => token = Some(Token::BinaryOp(FloatBinaryOp::Div)),
+				"%" => token = Some(Token::BinaryOp(FloatBinaryOp::Rem)),
 				
 				"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"
 				=> state = State::ParsingFloatLiteral,
 				_ => state = State::ParsingLvalue,
 			}
-			if matches!(state, State::ParsingFloatLiteral|State::ParsingLvalue) {
-				if !matches!(expecting, Expecting::Operand) { break }
-			}
-			if let Some(operator) = operator {
-				if !matches!(operator, Operator::Lparen|Operator::Rparen) {
-					if !matches!(expecting, Expecting::Operator) { break }
-					expecting = Expecting::Operand;
-				}
-				if !matches!(operator, Operator::Lparen) {
-					while let Some(last) = operators.last() {
-						if matches!(operator, Operator::Rparen) {
-							if !matches!(last, Operator::Lparen) {
-								evaluate_last_operator(&mut operators, &mut operands);
-							} else {
-								operators.pop();
-								break;
-							}
-						} else {
-							if operator.get_priority() <= last.get_priority() {
-								evaluate_last_operator(&mut operators, &mut operands);
-							} else {
-								break
-							}
-						}
-					}
-				}
-				if !matches!(operator, Operator::Rparen) {
-					operators.push(operator);
-				}
+			if let Some(token) = token {
+				if !expression_constructor.push_token(token) { break }
 			}
 		}
 	}
-	if matches!(expecting, Expecting::Operand) {
-		try_push_operand(&mut state, &mut expecting, &mut operands, &mut cursor, code.len(), true);
+	try_push_operand(&mut expression_constructor, &mut state, &mut cursor, code.len());
+	dbg!((expression_constructor.finish(), &code[cursor..]))
+}
+
+#[derive(Debug)]
+enum BoolOrFloatBinaryOp {
+	BoolBinaryOp(BoolBinaryOp),
+	FloatBinaryOp(FloatBinaryOp),
+}
+
+fn bool_get_priority(token: &Token<BoolUnaryOp, BoolOrFloatBinaryOp>) -> u32 {
+	match token {
+		Token::Lparen => 0,
+		Token::Rparen => panic!(),
+		Token::UnaryOp(op) => todo!(),
+		Token::BinaryOp(op) => match op {
+			BoolOrFloatBinaryOp::BoolBinaryOp(op) => match op {
+				BoolBinaryOp::BoolBoolBinaryOp(op) => match op {
+					BoolBoolBinaryOp::Or => 1,
+					BoolBoolBinaryOp::And => 1,
+				}
+				BoolBinaryOp::BoolFloatBinaryOp(op) => match op {
+					BoolFloatBinaryOp::Equ => 2,
+					BoolFloatBinaryOp::Lt => 2,
+					BoolFloatBinaryOp::Gt => 2,
+					_ => todo!(),
+				}
+			}
+			BoolOrFloatBinaryOp::FloatBinaryOp(op) => match op {
+				FloatBinaryOp::Add => 3,
+				FloatBinaryOp::Sub => 3,
+				FloatBinaryOp::Mul => 4,
+				FloatBinaryOp::Div => 4,
+				FloatBinaryOp::Rem => 4,
+			}
+		}
 	}
-	while !operators.is_empty() {
-		evaluate_last_operator(&mut operators, &mut operands);
+}
+
+#[derive(Debug)]
+enum BoolOrFloatRvalue<'a> {
+	BoolRvalue(BoolRvalue<'a>),
+	FloatRvalue(FloatRvalue<'a>),
+}
+
+fn bool_eval<'a>(token: Token<BoolUnaryOp, BoolOrFloatBinaryOp>, lhs: BoolOrFloatRvalue<'a>, rhs: BoolOrFloatRvalue<'a>) -> BoolOrFloatRvalue<'a> {
+	match token {
+		Token::Lparen => panic!(),
+		Token::Rparen => panic!(),
+		Token::BinaryOp(op) => {
+			match op {
+				BoolOrFloatBinaryOp::BoolBinaryOp(op) => {
+					match op {
+						BoolBinaryOp::BoolBoolBinaryOp(op) => {
+							if let (BoolOrFloatRvalue::BoolRvalue(lhs), BoolOrFloatRvalue::BoolRvalue(rhs)) = (lhs, rhs) {
+								BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolBoolBinaryOp(op, Box::new(lhs), Box::new(rhs)))
+							} else { panic!() }
+						}
+						BoolBinaryOp::BoolFloatBinaryOp(op) => {
+							if let (BoolOrFloatRvalue::FloatRvalue(lhs), BoolOrFloatRvalue::FloatRvalue(rhs)) = (lhs, rhs) {
+								BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolFloatBinaryOp(op, lhs, rhs))
+							} else { panic!() }
+						}
+					}
+				}
+				BoolOrFloatBinaryOp::FloatBinaryOp(op) => {
+					if let (BoolOrFloatRvalue::FloatRvalue(lhs), BoolOrFloatRvalue::FloatRvalue(rhs)) = (lhs, rhs) {
+						BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Binary(op, Box::new(lhs), Box::new(rhs)))
+					} else { panic!() }
+				}
+			}
+		}
+		Token::UnaryOp(..) => todo!()
 	}
-	assert!(operands.len() == 1);
-	(operands.pop().unwrap(), &code[cursor..])
+}
+
+fn parse_bool_rvalue<'a>(code: &'a str) -> (BoolRvalue, &'a str) {
+	let mut expression_constructor = ExpressionConstructor::new(
+		bool_get_priority,
+		bool_eval,
+	);
+	enum State {
+		Unsure,
+		ParsingLvalueOrSauOrSi,
+		ParsingFloatLiteral,
+		ParsingToken,
+	}
+	let try_push_operand = |expression_constructor: &mut ExpressionConstructor<_,_,_,_,_>, state: &mut State, cursor: &mut usize, end: usize| {
+		match state {
+			State::ParsingLvalueOrSauOrSi => {
+				*state = State::Unsure;
+				let name = &code[*cursor..end];
+				let result = match (&expression_constructor.expecting, name) {
+					(Expecting::Operator, "si") => {
+						*cursor = end;
+						expression_constructor.push_token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(BoolBoolBinaryOp::And))))
+					}
+					(Expecting::Operator, "sau") => {
+						*cursor = end;
+						expression_constructor.push_token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(BoolBoolBinaryOp::Or))))
+					}
+					(Expecting::Operand, name) => {
+						*cursor = end;
+						expression_constructor.push_operand(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Lvalue(Lvalue(name))))
+					}
+					_ => false,
+				};
+				result
+			}
+			State::ParsingFloatLiteral => {
+				*state = State::Unsure;
+				let result = expression_constructor.push_operand(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Literal(code[*cursor..end].parse().unwrap())));
+				*cursor = end;
+				result
+			}
+			_ => true,
+		}
+	};
+	let mut state = State::Unsure;
+	let mut cursor = 0;
+	let mut graphemes = code.grapheme_indices(true);
+	while let Some((i, grapheme)) = graphemes.next() {
+		if not_variable(grapheme) {
+			if !try_push_operand(&mut expression_constructor, &mut state, &mut cursor, i) { break }
+		}
+		if let State::Unsure = state {
+			cursor = i;
+			let mut token = None;
+			match grapheme {
+				" " => {}
+				"," => break,
+				"(" => token = Some(Token::Lparen),
+				")" => token = Some(Token::Rparen),
+				
+				"+" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Add))),
+				"-" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Sub))),
+				"*" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Mul))),
+				"/" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Div))),
+				"%" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Rem))),
+				
+				"=" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Equ)))),
+				"<" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Lt)))),
+				">" => token = Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Gt)))),
+				
+				"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"
+				=> state = State::ParsingFloatLiteral,
+				_ => state = State::ParsingLvalueOrSauOrSi,
+			}
+			if let Some(token) = token {
+				if !expression_constructor.push_token(token) { break }
+			}
+		}
+	}
+	try_push_operand(&mut expression_constructor, &mut state, &mut cursor, code.len());
+	if let BoolOrFloatRvalue::BoolRvalue(rvalue) = expression_constructor.finish() {
+		dbg!((rvalue, &code[cursor..]))
+	} else { panic!() }
+}
+
+fn parse_scrie_param<'a>(code: &'a str) -> (ScrieParam<'a>, &'a str) {
+	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
+	match graphemes.next() {
+		Some((_, "'")) => {
+			let chr = graphemes.next().unwrap().1;
+			assert!(matches!(graphemes.next(), Some((_, "'"))));
+			let code =
+				if let Some((i, _)) = graphemes.next() { &code[i..] }
+				else { &code[code.len()..] };
+			(ScrieParam::CharLiteral(chr), code)
+		}
+		Some((start, "\"")) => {
+			let start = start + "\"".len();
+			let mut graphemes = graphemes.skip_while(|x| x.1 != "\"");
+			let next = graphemes.next().unwrap();
+			assert!(next.1 == "\"");
+			let end = next.0;
+			(ScrieParam::StringLiteral(&code[start..end]), &code[end+"\"".len()..])
+		}
+		Some(_) => {
+			let (rvalue, code) = parse_float_rvalue(code);
+			(ScrieParam::Rvalue(rvalue), code)
+		}
+		None => panic!(),
+	}
 }
 
 fn parse_second_step_scrie<'a>(mut code: &'a str) -> Instructiune<'a> {
-	let mut rvalues = Vec::new();
+	let mut params = Vec::new();
 	let mut done = false;
 	while !done {
-		let (rvalue, new_code) = parse_rvalue(code);
-		rvalues.push(rvalue);
+		let (param, new_code) = parse_scrie_param(code);
+		params.push(param);
 		code = new_code;
 		let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
 		match graphemes.next() {
@@ -310,7 +584,7 @@ fn parse_second_step_scrie<'a>(mut code: &'a str) -> Instructiune<'a> {
 			_ => panic!(),
 		}
 	}
-	Instructiune::Scrie(rvalues)
+	Instructiune::Scrie(params)
 }
 
 fn parse_lvalue<'a>(code: &'a str) -> (Lvalue, &'a str) {
@@ -354,7 +628,7 @@ fn parse_second_step_lvalue<'a>(code: &'a str, lvalue: Lvalue<'a>) -> Instructiu
 		let other_lvalue = parse_lvalue(&code[next.0+next.1.len()..]).0;
 		Instructiune::Interschimbare(lvalue, other_lvalue)
 	} else {
-		let rvalue = parse_rvalue(&code[next.0..]).0;
+		let rvalue = parse_float_rvalue(&code[next.0..]).0;
 		Instructiune::Atribuire(lvalue, rvalue)
 	}
 }
@@ -366,21 +640,21 @@ fn parse_second_step_pentru<'a>(code: &'a str) -> Instructiune<'a> {
 	assert!(matches!(graphemes.next(), Some((_, "-"))));
 	let next = graphemes.next().unwrap();
 	let code = &code[next.0..];
-	let (start, code) = parse_rvalue(code);
+	let (start, code) = parse_float_rvalue(code);
 	
 	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
 	let next = graphemes.next().unwrap();
 	assert!(next.1 == ",");
 	
 	let code = &code[next.0 + next.1.len()..];
-	let (end, code) = parse_rvalue(code);
+	let (end, code) = parse_float_rvalue(code);
 	
 	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
 	
 	let mut next = graphemes.next().unwrap();
 	let (increment, mut graphemes) = if next.1 == "," {
 		let code = &code[next.0 + next.1.len()..];
-		let (increment, code) = parse_rvalue(code);
+		let (increment, code) = parse_float_rvalue(code);
 		let mut graphemes = code.grapheme_indices(true)
 			.skip_while(is_whitespace);
 		next = graphemes.next().unwrap();
@@ -402,7 +676,7 @@ fn parse_second_step_pentru<'a>(code: &'a str) -> Instructiune<'a> {
 }
 
 fn parse_second_step_daca(code: &str) -> Instructiune {
-	let (rvalue, code) = parse_rvalue(code);
+	let (rvalue, code) = parse_bool_rvalue(code);
 	
 	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
 	
@@ -430,7 +704,7 @@ fn parse_second_step_cat_timp<'a>(code: &'a str) -> Instructiune<'a> {
 	let next = graphemes.next().unwrap();
 	assert!(next.1 == " ");
 	
-	let (condition, code) = parse_rvalue(&code[next.0..]);
+	let (condition, code) = parse_bool_rvalue(&code[next.0..]);
 	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
 	assert!(matches!(graphemes.next(), Some((_, "e"))));
 	assert!(matches!(graphemes.next(), Some((_, "x"))));
@@ -492,7 +766,7 @@ fn parse_pana_cand<'a>(code: &'a str, instructions: Vec<Instructiune<'a>>) -> In
 	let next = graphemes.next().unwrap();
 	
 	let code = &code[next.0..];
-	let (condition, code) = parse_rvalue(code);
+	let (condition, code) = parse_bool_rvalue(code);
 	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
 	assert!(graphemes.next().is_none());
 	
@@ -600,19 +874,21 @@ fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent
 
 fn test_execute() {
 	let instructions = vec![
-		Instructiune::Atribuire(Lvalue("a"), Rvalue::Literal(10f32)),
-		Instructiune::Atribuire(Lvalue("b"), Rvalue::Literal(5f32)),
+		Instructiune::Atribuire(Lvalue("a"), FloatRvalue::Literal(10f32)),
+		Instructiune::Atribuire(Lvalue("b"), FloatRvalue::Literal(5f32)),
 		Instructiune::Interschimbare(Lvalue("a"), Lvalue("b")),
 		Instructiune::Scrie(
 			vec![
-				Rvalue::Binary(
-					BinaryOp::Add,
-					Box::new(Rvalue::Binary(
-						BinaryOp::Add,
-						Box::new(Rvalue::Lvalue(Lvalue("a"))),
-						Box::new(Rvalue::Lvalue(Lvalue("b"))),
-					)),
-					Box::new(Rvalue::Literal(3f32)),
+				ScrieParam::Rvalue(
+					FloatRvalue::Binary(
+						FloatBinaryOp::Add,
+						Box::new(FloatRvalue::Binary(
+							FloatBinaryOp::Add,
+							Box::new(FloatRvalue::Lvalue(Lvalue("a"))),
+							Box::new(FloatRvalue::Lvalue(Lvalue("b"))),
+						)),
+						Box::new(FloatRvalue::Literal(3f32)),
+					)
 				)
 			]
 		)

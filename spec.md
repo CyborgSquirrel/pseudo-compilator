@@ -1,5 +1,6 @@
 # TODO
-scrie test
+- scrie test
+- check correctness of BoolFloatBinaryOp::Divides
 
 All the variables will be f32.
 Character literals specified between ' '.

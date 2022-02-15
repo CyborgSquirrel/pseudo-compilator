@@ -10,31 +10,31 @@ use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
 // We have one cursor per line.
-struct Cursor<'a> {
+struct LineCursor<'a> {
 	code: &'a str,
 	index: usize,
 }
-impl<'a> Cursor<'a> {
+impl<'a> LineCursor<'a> {
 	fn new(code: &'a str) -> Self {
 		Self { code, index: 0 }
 	}
 	fn code(&self) -> &'a str {
 		&self.code[self.index..]
 	}
-	fn expect_str(mut self, expected: &str) -> CompilationResult<Self> {
+	fn expect_str(mut self, expected: &str) -> LineParsingResult<Self> {
 		if self.code().starts_with(expected) {
 			self.index += expected.len();
 			Ok(self)
-		} else { Err(CompilationError::ExpectationError) }
+		} else { Err(LineParsingError::ExpectationError) }
 	}
-	fn next_grapheme_matches<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> CompilationResult<Self> {
+	fn next_grapheme_matches<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> LineParsingResult<Self> {
 		let next = self.code().grapheme_indices(true).next();
 			
 		if let Some(next) = next {
 			self.index += next.1.len();
 			if predicate(next.1) { Ok(self) }
-			else { Err(CompilationError::ExpectationError) }
-		} else { Err(CompilationError::ExpectationError) }
+			else { Err(LineParsingError::ExpectationError) }
+		} else { Err(LineParsingError::ExpectationError) }
 	}
 	fn skip_spaces(mut self) -> Self {
 		let offset = {
@@ -56,24 +56,37 @@ impl<'a> Cursor<'a> {
 		self.index += end;
 		(self, &code[..end])
 	}
-	fn parse_lvalue(self) -> CompilationResult<(Self, Lvalue<'a>)> {
+	fn parse_lvalue(self) -> LineParsingResult<(Self, Lvalue<'a>)> {
 		let (new_self, name) = self.skip_spaces().read_until(|x| not_variable(x));
 		if !name.is_empty() {
 			Ok((new_self, Lvalue(name)))
-		} else { Err(CompilationError::ExpectationError) }
+		} else { Err(LineParsingError::ExpectationError) }
 	}
-	fn expect_end(self) -> CompilationResult<()> {
+	fn expect_end(self) -> LineParsingResult<()> {
 		if self.code.len() == self.index {
 			Ok(())
-		} else { Err(CompilationError::ExpectationError) }
+		} else { Err(LineParsingError::ExpectationError) }
 	}
 }
 
 #[derive(Debug)]
-enum CompilationError {
+enum LineParsingError {
 	ExpectationError,
 }
-type CompilationResult<T> = Result<T, CompilationError>;
+type LineParsingResult<T> = Result<T, LineParsingError>;
+
+type ParsingResult<T> = Result<T, ()>;
+
+struct Cursor<'a> {
+	code: &'a str,
+	line: usize,
+}
+
+impl<'a> Cursor<'a> {
+	fn new(code: &'a str) -> Self {
+		Self { code, line: 0 }
+	}
+}
 
 fn is_whitespace(x: &(usize, &str)) -> bool { x.1 == " "  }
 
@@ -318,7 +331,7 @@ fn parse_second_step_citeste<'a>(mut code: &'a str) -> Instructiune<'a> {
 	Instructiune::Citeste(lvalues)
 }
 
-fn parse_second_step_lvalue<'a>(mut cursor: Cursor<'a>, lvalue: Lvalue<'a>) -> Instructiune<'a> {
+fn parse_second_step_lvalue<'a>(mut cursor: LineCursor<'a>, lvalue: Lvalue<'a>) -> Instructiune<'a> {
 	let cursor = cursor
 		.skip_spaces()
 		.expect_str("<-").unwrap();
@@ -471,7 +484,7 @@ fn parse_pana_cand<'a>(code: &'a str, instructions: Vec<Instructiune<'a>>) -> In
 	Instructiune::RepetaPanaCand(instructions, condition)
 }
 
-fn parse_first_step<'a>(cursor: Cursor<'a>) -> Instructiune<'a> {
+fn parse_first_step<'a>(cursor: LineCursor<'a>) -> Instructiune<'a> {
 	let (cursor, name) = cursor.read_until(not_variable);
 	dbg!(cursor.code());
 	match dbg!(name) {
@@ -532,7 +545,7 @@ fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent
 							lines = code.split("\n");
 							Expecting::PanaCand(instructions)
 						} else {
-							let other_cursor = Cursor::new(line);
+							let other_cursor = LineCursor::new(line);
 							let mut instruction = dbg!(parse_first_step(other_cursor));
 							match &mut instruction {
 								Instructiune::DacaAtunciAltfel(_, instructions, _)

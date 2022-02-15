@@ -1,3 +1,6 @@
+mod expression;
+use expression::*;
+
 // use std::env;
 
 use std::{fs::File, io::Read, iter};
@@ -5,7 +8,7 @@ use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 use std::collections::HashMap;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 // We have one cursor per line.
 struct Cursor<'a> {
 	code: &'a str,
@@ -15,19 +18,49 @@ impl<'a> Cursor<'a> {
 	fn new(code: &'a str) -> Self {
 		Self { code, index: 0 }
 	}
+	fn code(&self) -> &'a str {
+		&self.code[self.index..]
+	}
 	fn expect_str(mut self, expected: &str) -> CompilationResult<Self> {
-		if self.code[self.index..].starts_with(expected) {
+		if self.code().starts_with(expected) {
 			self.index += expected.len();
 			Ok(self)
 		} else { Err(CompilationError::ExpectationError) }
 	}
+	fn next_grapheme_matches<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> CompilationResult<Self> {
+		let next = self.code().grapheme_indices(true).next();
+			
+		if let Some(next) = next {
+			self.index += next.1.len();
+			if predicate(next.1) { Ok(self) }
+			else { Err(CompilationError::ExpectationError) }
+		} else { Err(CompilationError::ExpectationError) }
+	}
 	fn skip_spaces(mut self) -> Self {
 		let offset = {
-			let code = &self.code[self.index..];
-			code.find(|x| x != ' ').unwrap_or(code.len())
+			let code = self.code();
+			code.grapheme_indices(true)
+				.find(|(_, x)| *x != " ")
+				.map(|(i, _)| i)
+				.unwrap_or(code.len())
 		};
 		self.index += offset;
 		self
+	}
+	fn read_until<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> (Self, &'a str) {
+		let code = self.code();
+		let end = code.grapheme_indices(true)
+			.find(|(_, x)| predicate(x))
+			.map(|(i, _)| i)
+			.unwrap_or(code.len());
+		self.index += end;
+		(self, &code[..end])
+	}
+	fn parse_lvalue(self) -> CompilationResult<(Self, Lvalue<'a>)> {
+		let (new_self, name) = self.skip_spaces().read_until(|x| not_variable(x));
+		if !name.is_empty() {
+			Ok((new_self, Lvalue(name)))
+		} else { Err(CompilationError::ExpectationError) }
 	}
 	fn expect_end(self) -> CompilationResult<()> {
 		if self.code.len() == self.index {
@@ -36,6 +69,7 @@ impl<'a> Cursor<'a> {
 	}
 }
 
+#[derive(Debug)]
 enum CompilationError {
 	ExpectationError,
 }
@@ -44,55 +78,11 @@ type CompilationResult<T> = Result<T, CompilationError>;
 fn is_whitespace(x: &(usize, &str)) -> bool { x.1 == " "  }
 
 #[derive(Debug)]
-struct Lvalue<'a> (&'a str);
-
-#[derive(Debug)]
-enum FloatUnaryOp { Ident, Neg, Whole }
-
-#[derive(Debug)]
-enum FloatBinaryOp { Add, Sub, Mul, Div, Rem }
-
-#[derive(Debug)]
-enum FloatRvalue<'a> {
-	Literal(f32),
-	Lvalue(Lvalue<'a>),
-	Unary(FloatUnaryOp, Box<FloatRvalue<'a>>),
-	Binary(FloatBinaryOp, Box<FloatRvalue<'a>>, Box<FloatRvalue<'a>>),
-}
-
-#[derive(Debug)]
 enum ScrieParam<'a> {
 	Rvalue(FloatRvalue<'a>),
 	StringLiteral(&'a str),
 	CharLiteral(&'a str),
 }
-
-#[derive(Debug)]
-enum BoolFloatBinaryOp {
-	Equ, Nequ, Lt, Gt, Lte, Gte,
-	Divides,
-}
-
-#[derive(Debug)]
-enum BoolBoolBinaryOp {
-	And, Or,
-}
-
-#[derive(Debug)]
-enum BoolRvalue<'a> {
-	BoolFloatBinaryOp(BoolFloatBinaryOp, FloatRvalue<'a>, FloatRvalue<'a>),
-	BoolBoolBinaryOp(BoolBoolBinaryOp, Box<BoolRvalue<'a>>, Box<BoolRvalue<'a>>),
-}
-
-#[derive(Debug)]
-enum BoolUnaryOp {}
-
-#[derive(Debug)]
-enum BoolBinaryOp {
-	BoolFloatBinaryOp(BoolFloatBinaryOp),
-	BoolBoolBinaryOp(BoolBoolBinaryOp),
-}
-
 #[derive(Debug)]
 enum Instructiune<'a> {
 	Atribuire(Lvalue<'a>, FloatRvalue<'a>),
@@ -250,437 +240,7 @@ fn not_variable(grapheme: &str) -> bool {
 	);
 }
 
-#[derive(Debug)]
-enum Token <UnaryOp, BinaryOp> { Lparen, Rparen, UnaryOp(UnaryOp), BinaryOp(BinaryOp) }
-fn float_get_priority(token: &Token<FloatUnaryOp, FloatBinaryOp>) -> u32 {
-	match token {
-		Token::Lparen => 0,
-		Token::Rparen => panic!(),
-		Token::UnaryOp(op) => todo!(),
-		Token::BinaryOp(op) => match op {
-			FloatBinaryOp::Add => 1,
-			FloatBinaryOp::Sub => 1,
-			FloatBinaryOp::Mul => 2,
-			FloatBinaryOp::Div => 2,
-			FloatBinaryOp::Rem => 2,
-		}
-	}
-}
-fn float_eval<'a>(token: Token<FloatUnaryOp, FloatBinaryOp>, lhs: FloatRvalue<'a>, rhs: FloatRvalue<'a>) -> FloatRvalue<'a> {
-	match token {
-		Token::Lparen => panic!(),
-		Token::Rparen => panic!(),
-		Token::BinaryOp(op) => {
-			FloatRvalue::Binary(op, Box::new(lhs), Box::new(rhs))
-		}
-		Token::UnaryOp(..) => todo!()
-	}
-}
 
-struct ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn> {
-	tokens: Vec<Token<UnaryOp, BinaryOp>>,
-	operands: Vec<Operand>,
-	expecting: Expecting,
-	get_priority: GetPriorityFn,
-	eval: EvalFn,
-}
-
-enum Expecting {
-	Operand, Operator
-}
-
-impl<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
-ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
-where
-	GetPriorityFn: Fn(&Token<UnaryOp, BinaryOp>) -> u32,
-	EvalFn: Fn(Token<UnaryOp, BinaryOp>, Operand, Operand) -> Operand,
-	Operand: std::fmt::Debug,
-	UnaryOp: std::fmt::Debug,
-	BinaryOp: std::fmt::Debug,
-{
-	fn new(get_priority: GetPriorityFn, eval: EvalFn) -> Self {
-		Self {
-			tokens: Vec::new(),
-			operands: Vec::new(),
-			expecting: Expecting::Operand,
-			get_priority,
-			eval,
-		}
-	}
-	fn eval_binary_op(&mut self) {
-		let rhs = self.operands.pop().unwrap();
-		let lhs = self.operands.pop().unwrap();
-		let last = self.tokens.pop().unwrap();
-		self.operands.push((self.eval)(last, lhs, rhs));
-	}
-	fn push_token(&mut self, token: Token<UnaryOp, BinaryOp>) -> bool {
-		match &token {
-			Token::Lparen => { }
-			Token::Rparen => {
-				while let Some(last) = self.tokens.last() {
-					if !matches!(last, Token::Lparen) {
-						self.eval_binary_op();
-					} else {
-						self.tokens.pop();
-						break;
-					}
-				}
-			}
-			Token::BinaryOp(..) => {
-				if !matches!(self.expecting, Expecting::Operator) { return false }
-				self.expecting = Expecting::Operand;
-				while let Some(last) = self.tokens.last() {
-					if (self.get_priority)(&token) <= (self.get_priority)(last) {
-						self.eval_binary_op();
-					} else {
-						break;
-					}
-				}
-			}
-			Token::UnaryOp(..) => {
-				// assert!(matches!(self.expecting, Expecting::Operator));
-				todo!();
-			}
-		}
-		if !matches!(token, Token::Rparen) {
-			self.tokens.push(token);
-		}
-		true
-	}
-	fn push_operand(&mut self, operand: Operand) -> bool {
-		if !matches!(self.expecting, Expecting::Operand) { return false }
-		self.expecting = Expecting::Operator;
-		self.operands.push(operand);
-		true
-	}
-	fn finish(mut self) -> Operand {
-		while !self.tokens.is_empty() {
-			self.eval_binary_op();
-		}
-		assert!(self.operands.len() == 1);
-		self.operands.pop().unwrap()
-	}
-}
-
-fn parse_float_rvalue<'a>(code: &'a str) -> (FloatRvalue, &'a str) {
-	let mut expression_constructor = ExpressionConstructor::new(
-		float_get_priority,
-		float_eval,
-	);
-	enum State {
-		Unsure,
-		ParsingLvalue,
-		ParsingFloatLiteral,
-	}
-	let try_push_operand = |expression_constructor: &mut ExpressionConstructor<_,_,_,_,_>, state: &mut State, cursor: &mut usize, end: usize| {
-		match state {
-			State::ParsingLvalue => {
-				*state = State::Unsure;
-				let result = expression_constructor.push_operand(FloatRvalue::Lvalue(Lvalue(&code[*cursor..end])));
-				if result { *cursor = end }
-				result
-			}
-			State::ParsingFloatLiteral => {
-				*state = State::Unsure;
-				let result = expression_constructor.push_operand(FloatRvalue::Literal(code[*cursor..end].parse().unwrap()));
-				if result { *cursor = end }
-				result
-			}
-			_ => true,
-		}
-	};
-	let mut state = State::Unsure;
-	let mut cursor = 0;
-	let mut graphemes = code.grapheme_indices(true);
-	while let Some((i, grapheme)) = graphemes.next() {
-		if not_variable(grapheme) {
-			if !try_push_operand(&mut expression_constructor, &mut state, &mut cursor, i) { break }
-		}
-		if let State::Unsure = state {
-			cursor = i;
-			let mut token = None;
-			match grapheme {
-				" " => {}
-				"," => break,
-				"(" => token = Some(Token::Lparen),
-				")" => token = Some(Token::Rparen),
-				
-				"+" => token = Some(Token::BinaryOp(FloatBinaryOp::Add)),
-				"-" => token = Some(Token::BinaryOp(FloatBinaryOp::Sub)),
-				"*" => token = Some(Token::BinaryOp(FloatBinaryOp::Mul)),
-				"/" => token = Some(Token::BinaryOp(FloatBinaryOp::Div)),
-				"%" => token = Some(Token::BinaryOp(FloatBinaryOp::Rem)),
-				
-				"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"
-				=> state = State::ParsingFloatLiteral,
-				_ => state = State::ParsingLvalue,
-			}
-			if let Some(token) = token {
-				if !expression_constructor.push_token(token) { break }
-			}
-		}
-	}
-	try_push_operand(&mut expression_constructor, &mut state, &mut cursor, code.len());
-	dbg!((expression_constructor.finish(), &code[cursor..]))
-}
-
-#[derive(Debug)]
-enum BoolOrFloatBinaryOp {
-	BoolBinaryOp(BoolBinaryOp),
-	FloatBinaryOp(FloatBinaryOp),
-}
-
-fn bool_get_priority(token: &Token<BoolUnaryOp, BoolOrFloatBinaryOp>) -> u32 {
-	match token {
-		Token::Lparen => 0,
-		Token::Rparen => panic!(),
-		Token::UnaryOp(op) => todo!(),
-		Token::BinaryOp(op) => match op {
-			BoolOrFloatBinaryOp::BoolBinaryOp(op) => match op {
-				BoolBinaryOp::BoolBoolBinaryOp(op) => match op {
-					BoolBoolBinaryOp::Or => 1,
-					BoolBoolBinaryOp::And => 1,
-				}
-				BoolBinaryOp::BoolFloatBinaryOp(op) => match op {
-					BoolFloatBinaryOp::Equ => 2,
-					BoolFloatBinaryOp::Lt => 2,
-					BoolFloatBinaryOp::Lte => 2,
-					BoolFloatBinaryOp::Gt => 2,
-					BoolFloatBinaryOp::Gte => 2,
-					_ => todo!(),
-				}
-			}
-			BoolOrFloatBinaryOp::FloatBinaryOp(op) => match op {
-				FloatBinaryOp::Add => 3,
-				FloatBinaryOp::Sub => 3,
-				FloatBinaryOp::Mul => 4,
-				FloatBinaryOp::Div => 4,
-				FloatBinaryOp::Rem => 4,
-			}
-		}
-	}
-}
-
-#[derive(Debug)]
-enum BoolOrFloatRvalue<'a> {
-	BoolRvalue(BoolRvalue<'a>),
-	FloatRvalue(FloatRvalue<'a>),
-}
-
-fn bool_eval<'a>(token: Token<BoolUnaryOp, BoolOrFloatBinaryOp>, lhs: BoolOrFloatRvalue<'a>, rhs: BoolOrFloatRvalue<'a>) -> BoolOrFloatRvalue<'a> {
-	match token {
-		Token::Lparen => panic!(),
-		Token::Rparen => panic!(),
-		Token::BinaryOp(op) => {
-			match op {
-				BoolOrFloatBinaryOp::BoolBinaryOp(op) => {
-					match op {
-						BoolBinaryOp::BoolBoolBinaryOp(op) => {
-							if let (BoolOrFloatRvalue::BoolRvalue(lhs), BoolOrFloatRvalue::BoolRvalue(rhs)) = (lhs, rhs) {
-								BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolBoolBinaryOp(op, Box::new(lhs), Box::new(rhs)))
-							} else { panic!() }
-						}
-						BoolBinaryOp::BoolFloatBinaryOp(op) => {
-							if let (BoolOrFloatRvalue::FloatRvalue(lhs), BoolOrFloatRvalue::FloatRvalue(rhs)) = (lhs, rhs) {
-								BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolFloatBinaryOp(op, lhs, rhs))
-							} else { panic!() }
-						}
-					}
-				}
-				BoolOrFloatBinaryOp::FloatBinaryOp(op) => {
-					if let (BoolOrFloatRvalue::FloatRvalue(lhs), BoolOrFloatRvalue::FloatRvalue(rhs)) = (lhs, rhs) {
-						BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Binary(op, Box::new(lhs), Box::new(rhs)))
-					} else { panic!() }
-				}
-			}
-		}
-		Token::UnaryOp(..) => todo!()
-	}
-}
-
-fn parse_bool_rvalue<'a>(code: &'a str) -> (BoolRvalue, &'a str) {
-	// split up all the text into four? buckets
-	// - Reserved (<, =, >, +, -, etc.)
-	// - Other (everything else)
-	// - Ignored (spaces)
-	// - Breaking (, and ;)
-	
-	#[derive(Debug)]
-	enum GraphemeKind { Reserved, Ignored, Other }
-	fn get_char_kind(grapheme: &str) -> Option<GraphemeKind> {
-		match grapheme {
-			"+"|"-"|"*"|"/"|"%"|
-			"="|"!"|"<"|">"
-				=> Some(GraphemeKind::Reserved),
-			" "
-				=> Some(GraphemeKind::Ignored),
-			","
-				=> None,
-			_
-				=> Some(GraphemeKind::Other),
-		}
-	}
-	
-	let mut expression_constructor = ExpressionConstructor::new(
-		bool_get_priority,
-		bool_eval,
-	);
-	#[derive(Debug)]
-	enum State {
-		Unsure,
-		ParsingReserved,
-		ParsingOther(HelpIsNeeded),
-	}
-	#[derive(Debug)]
-	enum HelpIsNeeded {
-		LvalueOrSauOrSi,
-		FloatLiteral,
-	}
-	#[derive(Debug)]
-	enum Catastrophe<'a> {
-		ParsedOperand(BoolOrFloatRvalue<'a>),
-		ParsedToken(Token<BoolUnaryOp, BoolOrFloatBinaryOp>),
-		Skipped,
-	}
-	let catastrophe = |expecting: &Expecting, state: &State, cursor: usize, end: usize, last: Option<usize>| {
-		let name = &code[cursor..end];
-		match state {
-			State::ParsingOther(help) => {
-				// only if the last grapheme read is reserved (or there is none) we do this
-				// you don't really care what the grapheme is though
-				// cursor is managed outside of this func
-				//  if this func returns true, cursor is set to end
-				//  otherwise it is untouched
-				if last.is_none() {
-					match help {
-						HelpIsNeeded::LvalueOrSauOrSi => {
-							match (expecting, name) {
-								(Expecting::Operator, "si") => {
-									Catastrophe::ParsedToken(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(BoolBoolBinaryOp::And))))
-								}
-								(Expecting::Operator, "sau") => {
-									Catastrophe::ParsedToken(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(BoolBoolBinaryOp::Or))))
-								}
-								(_, name) => {
-									Catastrophe::ParsedOperand(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Lvalue(Lvalue(name))))
-								}
-							}
-						}
-						HelpIsNeeded::FloatLiteral => {
-							Catastrophe::ParsedOperand(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Literal(name.parse().unwrap())))
-						}
-					}
-				} else { Catastrophe::Skipped }
-			}
-			State::ParsingReserved => {
-				fn sustache(name: &str) -> Option<Token<BoolUnaryOp, BoolOrFloatBinaryOp>> {
-					match name {
-						"(" => Some(Token::Lparen),
-						")" => Some(Token::Rparen),
-						
-						"+" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Add))),
-						"-" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Sub))),
-						"*" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Mul))),
-						"/" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Div))),
-						"%" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(FloatBinaryOp::Rem))),
-						
-						"=" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Equ)))),
-						"!=" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Nequ)))),
-						"<" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Lt)))),
-						"<=" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Lte)))),
-						">" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Gt)))),
-						">=" => Some(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(BoolFloatBinaryOp::Gte)))),
-						
-						_ => None,
-					}
-				}
-				let token = if let Some(last) = last {
-					let help = &code[cursor..last];
-					if sustache(help).is_none() {
-						sustache(name)
-					} else {
-						None
-					}
-				} else {
-					sustache(name)
-				};
-				if let Some(token) = token {
-					Catastrophe::ParsedToken(token)
-				} else {
-					Catastrophe::Skipped
-				}
-				// if the extended version doesn't match, we return the not-extended version
-				// if the extended version matches, we don't do anything
-				// if there is no extended version, we return the non-extended version
-				// last will also be none if what we're parsing doesn't match with the latest char
-			}
-			State::Unsure => Catastrophe::Skipped
-		}
-	};
-	let mut state = State::Unsure;
-	let mut cursor = 0;
-	let mut graphemes = code.grapheme_indices(true);
-	while let Some((i, grapheme)) = graphemes.next() {
-		if let Some(grapheme_kind) = get_char_kind(grapheme) {
-			let last = match (&grapheme_kind, &state) {
-				(GraphemeKind::Reserved, State::ParsingReserved) |
-				(GraphemeKind::Other, State::ParsingOther(..))
-					=> Some(i+grapheme.len()),
-				_ => None,
-			};
-			let result = catastrophe(&expression_constructor.expecting, &state, cursor, i, last);
-			match result {
-				Catastrophe::Skipped => { }
-				Catastrophe::ParsedOperand(operand) => {
-					if expression_constructor.push_operand(operand) {
-						cursor = i;
-						state = State::Unsure;
-					} else { break }
-				}
-				Catastrophe::ParsedToken(token) => {
-					if expression_constructor.push_token(token) { 
-						cursor = i;
-						state = State::Unsure;
-					} else { break }
-				}
-			}
-			if let State::Unsure = &state {
-				cursor = i;
-				state = match grapheme_kind {
-					GraphemeKind::Ignored => State::Unsure,
-					GraphemeKind::Reserved => State::ParsingReserved,
-					GraphemeKind::Other => State::ParsingOther(
-						match grapheme {
-							"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"
-								=> HelpIsNeeded::FloatLiteral,
-							_
-								=> HelpIsNeeded::LvalueOrSauOrSi,
-						}
-					),
-				};
-			}
-		} else { break }
-	}
-	println!("{:?}", &code[cursor..]);
-	let i = graphemes.next().map(|(i, _)| i).unwrap_or(code.len());
-	let result = catastrophe(&expression_constructor.expecting, &state, cursor, i, None);
-	match result {
-		Catastrophe::Skipped => { }
-		Catastrophe::ParsedOperand(operand) => {
-			if expression_constructor.push_operand(operand) {
-				cursor = i;
-			}
-		}
-		Catastrophe::ParsedToken(token) => {
-			if expression_constructor.push_token(token) {
-				cursor = i;
-			}
-		}
-	}
-	if let BoolOrFloatRvalue::BoolRvalue(rvalue) = expression_constructor.finish() {
-		dbg!((rvalue, &code[cursor..]))
-	} else { panic!() }
-}
 
 fn parse_scrie_param<'a>(code: &'a str) -> (ScrieParam<'a>, &'a str) {
 	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
@@ -758,16 +318,15 @@ fn parse_second_step_citeste<'a>(mut code: &'a str) -> Instructiune<'a> {
 	Instructiune::Citeste(lvalues)
 }
 
-fn parse_second_step_lvalue<'a>(code: &'a str, lvalue: Lvalue<'a>) -> Instructiune<'a> {
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	assert!(matches!(graphemes.next(), Some((_, "<"))));
-	assert!(matches!(graphemes.next(), Some((_, "-"))));
-	let next = graphemes.next().unwrap();
-	if next.1 == ">" {
-		let other_lvalue = parse_lvalue(&code[next.0+next.1.len()..]).0;
+fn parse_second_step_lvalue<'a>(mut cursor: Cursor<'a>, lvalue: Lvalue<'a>) -> Instructiune<'a> {
+	let cursor = cursor
+		.skip_spaces()
+		.expect_str("<-").unwrap();
+	if let Ok(cursor) = cursor.next_grapheme_matches(|x| x == ">") {
+		let other_lvalue = cursor.parse_lvalue().unwrap().1;
 		Instructiune::Interschimbare(lvalue, other_lvalue)
 	} else {
-		let rvalue = parse_float_rvalue(&code[next.0..]).0;
+		let rvalue = parse_float_rvalue(cursor.code()).0;
 		Instructiune::Atribuire(lvalue, rvalue)
 	}
 }
@@ -912,32 +471,22 @@ fn parse_pana_cand<'a>(code: &'a str, instructions: Vec<Instructiune<'a>>) -> In
 	Instructiune::RepetaPanaCand(instructions, condition)
 }
 
-fn parse_first_step<'a>(code: &'a str) -> Instructiune<'a> {
-	let mut cursor = 0;
-	let mut last_grapheme_len = 0;
-	let mut read_first_step = || {
-		for (u, grapheme) in code.grapheme_indices(true) {
-			if not_variable(grapheme) {
-				cursor = u;
-				last_grapheme_len = grapheme.len();
-				return &code[0..u];
-			}
-		}
-		panic!()
-	};
-	match dbg!(read_first_step()) {
+fn parse_first_step<'a>(cursor: Cursor<'a>) -> Instructiune<'a> {
+	let (cursor, name) = cursor.read_until(not_variable);
+	dbg!(cursor.code());
+	match dbg!(name) {
 		"daca" =>
-			parse_second_step_daca(&code[cursor..]),
+			parse_second_step_daca(cursor.code()),
 		"cat" =>
-			parse_second_step_cat_timp(&code[cursor..]),
+			parse_second_step_cat_timp(cursor.code()),
 		"pentru" =>
-			parse_second_step_pentru(&code[cursor..]),
+			parse_second_step_pentru(cursor.code()),
 		"scrie" =>
-			parse_second_step_scrie(&code[cursor..]),
+			parse_second_step_scrie(cursor.code()),
 		"citeste" =>
-			parse_second_step_citeste(&code[cursor..]),
+			parse_second_step_citeste(cursor.code()),
 		x =>
-			parse_second_step_lvalue(&code[cursor..], Lvalue(x)),
+			parse_second_step_lvalue(cursor, Lvalue(x)),
 	}
 }
 
@@ -983,7 +532,8 @@ fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent
 							lines = code.split("\n");
 							Expecting::PanaCand(instructions)
 						} else {
-							let mut instruction = dbg!(parse_first_step(line));
+							let other_cursor = Cursor::new(line);
+							let mut instruction = dbg!(parse_first_step(other_cursor));
 							match &mut instruction {
 								Instructiune::DacaAtunciAltfel(_, instructions, _)
 								| Instructiune::CatTimpExecuta(_, instructions)

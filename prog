@@ -1,6 +1,31 @@
-citeste a,b
-daca a<b atunci
-	a <-> b
-pentru x<-a,b,-1 executa
-	daca x%2 != 0 atunci
-		scrie x, ' '
+a<-10
+scrie 1, ' ', 5+3+a, "very nice ", 69, ""
+daca a+5=10 sau a=10 atunci
+	scrie "DE CE ESTE a=", a, " DOMINE???"
+daca a=9 atunci
+	scrie 100
+altfel
+	scrie 69
+repeta
+	a <- a+1
+pana cand a=15
+scrie a
+b<-5
+c <-  (a+2)*b+3
+scrie a%5
+a <- a-1
+scrie a
+a<->b
+a  <-> b
+cat timp a > 0 executa
+	a <- a-1
+	scrie a
+scrie 123
+pentru i<-1,5,2 executa
+	scrie i
+daca a < b atunci
+	scrie 1
+	daca b = 10 atunci
+		scrie 2
+daca a+b = 15 atunci
+	scrie 3

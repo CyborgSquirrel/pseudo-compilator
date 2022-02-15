@@ -1,3 +1,8 @@
+scrie "
+daca 1<1 a
+	scrie "caca"
+altfel
+	scrie "maca"
 a<-10
 scrie 1, ' ', 5+3+a, "very nice ", 69, ""
 daca a+5=10 sau a=10 atunci

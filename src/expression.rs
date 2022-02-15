@@ -1,4 +1,5 @@
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::{UnicodeSegmentation, GraphemeIndices};
+use crate::{LineCursor, LineParsingIntermediateResult, LineParsingErrorKind, get_grapheme_kind, GraphemeKind};
 
 #[derive(Debug)]
 pub struct Lvalue<'a> (pub &'a str);
@@ -84,6 +85,15 @@ enum Expecting {
 	Operand, Operator
 }
 
+#[derive(Debug)]
+enum ExpressionConstructionError {
+	TooManyOperands,
+	TooFewOperands,
+	TooFewOperators,
+}
+
+type ExpressionConstructorResult<T> = Result<T, ExpressionConstructionError>;
+
 impl<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
 ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
 where
@@ -102,19 +112,22 @@ where
 			eval,
 		}
 	}
-	fn eval_binary_op(&mut self) {
-		let rhs = self.operands.pop().unwrap();
-		let lhs = self.operands.pop().unwrap();
-		let last = self.tokens.pop().unwrap();
+	fn eval_binary_op(&mut self) -> ExpressionConstructorResult<()> {
+		dbg!(&self.tokens);
+		dbg!(&self.operands);
+		let rhs = self.operands.pop().ok_or(ExpressionConstructionError::TooFewOperands)?;
+		let lhs = self.operands.pop().ok_or(ExpressionConstructionError::TooFewOperands)?;
+		let last = self.tokens.pop().ok_or(ExpressionConstructionError::TooFewOperators)?;
 		self.operands.push((self.eval)(last, lhs, rhs));
+		Ok(())
 	}
-	fn push_token(&mut self, token: Token<UnaryOp, BinaryOp>) -> bool {
+	fn push_token(&mut self, token: Token<UnaryOp, BinaryOp>) -> ExpressionConstructorResult<bool> {
 		match &token {
 			Token::Lparen => { }
 			Token::Rparen => {
 				while let Some(last) = self.tokens.last() {
 					if !matches!(last, Token::Lparen) {
-						self.eval_binary_op();
+						self.eval_binary_op()?;
 					} else {
 						self.tokens.pop();
 						break;
@@ -122,11 +135,11 @@ where
 				}
 			}
 			Token::BinaryOp(..) => {
-				if !matches!(self.expecting, Expecting::Operator) { return false }
+				if !matches!(self.expecting, Expecting::Operator) { return Ok(false) }
 				self.expecting = Expecting::Operand;
 				while let Some(last) = self.tokens.last() {
 					if (self.get_priority)(&token) <= (self.get_priority)(last) {
-						self.eval_binary_op();
+						self.eval_binary_op()?;
 					} else {
 						break;
 					}
@@ -140,7 +153,7 @@ where
 		if !matches!(token, Token::Rparen) {
 			self.tokens.push(token);
 		}
-		true
+		Ok(true)
 	}
 	fn push_operand(&mut self, operand: Operand) -> bool {
 		if !matches!(self.expecting, Expecting::Operand) { return false }
@@ -148,12 +161,15 @@ where
 		self.operands.push(operand);
 		true
 	}
-	fn finish(mut self) -> Operand {
+	fn finish(mut self) -> ExpressionConstructorResult<Operand> {
 		while !self.tokens.is_empty() {
-			self.eval_binary_op();
+			self.eval_binary_op()?;
 		}
-		assert!(self.operands.len() == 1);
-		self.operands.pop().unwrap()
+		match self.operands.len().cmp(&1) {
+			std::cmp::Ordering::Less => Err(ExpressionConstructionError::TooFewOperands),
+			std::cmp::Ordering::Greater => Err(ExpressionConstructionError::TooManyOperands),
+			std::cmp::Ordering::Equal => Ok(self.operands.pop().unwrap()),
+		}
 	}
 }
 
@@ -232,38 +248,24 @@ fn bool_eval<'a>(token: Token<BoolUnaryOp, BoolOrFloatBinaryOp>, lhs: BoolOrFloa
 }
 
 #[derive(Debug)]
-enum GraphemeKind { Reserved, Ignored, Other }
-fn get_grapheme_kind(grapheme: &str) -> Option<GraphemeKind> {
-	match grapheme {
-		"+"|"-"|"*"|"/"|"%"|
-		"="|"!"|"<"|">"|
-		"("|")"
-			=> Some(GraphemeKind::Reserved),
-		" "
-			=> Some(GraphemeKind::Ignored),
-		","
-			=> None,
-		_
-			=> Some(GraphemeKind::Other),
-	}
-}
-
-#[derive(Debug)]
 enum State {
 	Unsure,
 	ParsingReserved,
 	ParsingOther(HelpIsNeeded),
 }
+
 #[derive(Debug)]
 enum HelpIsNeeded {
 	LvalueOrSauOrSi,
 	FloatLiteral,
 }
+
 #[derive(Debug)]
 enum Catastrophe<Operand, UnaryOp, BinaryOp> {
 	Parsed(What<Operand, UnaryOp, BinaryOp>),
 	Skipped,
 }
+
 #[derive(Debug)]
 enum What<Operand, UnaryOp, BinaryOp> {
 	Operand(Operand),
@@ -271,10 +273,10 @@ enum What<Operand, UnaryOp, BinaryOp> {
 }
 
 fn parsinate<'a, F, GetPriorityFn, EvalFn, Operand, UnaryOp, BinaryOp>(
-	code: &'a str, mut catastrophe: F,
+	mut cursor: LineCursor<'a>, mut catastrophe: F,
 	mut expression_constructor: ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>,
 )
--> (Operand, &'a str)
+-> LineParsingIntermediateResult<Operand>
 where
 	F: FnMut(&Expecting, &State, &'a str, Option<&'a str>) -> Catastrophe<Operand, UnaryOp, BinaryOp>,
 	GetPriorityFn: Fn(&Token<UnaryOp, BinaryOp>) -> u32,
@@ -283,9 +285,9 @@ where
 	UnaryOp: std::fmt::Debug,
 	BinaryOp: std::fmt::Debug,
 {
-	let mut cursor = 0;
 	let mut state = State::Unsure;
-	let mut do_the_thing = |grapheme, current| {
+	let mut graphemes = cursor.code().grapheme_indices(true);
+	let mut do_the_thing = |cursor: &mut LineCursor<'a>, grapheme, current, graphemes: &mut GraphemeIndices<'a>| {
 		let mut keep_going = true;
 		let trickery = if let Some(grapheme) = grapheme {
 			if let Some(grapheme_kind) = get_grapheme_kind(grapheme) {
@@ -296,20 +298,22 @@ where
 			match (grapheme_kind, &state) {
 				(GraphemeKind::Reserved, State::ParsingReserved) |
 				(GraphemeKind::Other, State::ParsingOther(..))
-					=> Some(&code[cursor..current+grapheme.len()]),
+					=> Some(cursor.code_until(current+grapheme.len())),
 				_
 					=> None,
 			}
 		} else { None };
-		let result = catastrophe(&expression_constructor.expecting, &state, &code[cursor..current], next);
+		dbg!(current);
+		let result = catastrophe(&expression_constructor.expecting, &state, cursor.code_until(current), next);
 		match result {
 			Catastrophe::Skipped => { }
 			Catastrophe::Parsed(what) => {
 				if match what {
 					What::Operand(operand) => expression_constructor.push_operand(operand),
-					What::Token(token) => expression_constructor.push_token(token),
+					What::Token(token) => expression_constructor.push_token(token).unwrap(),
 				} {
-					cursor = current;
+					cursor.advance_by(current);
+					*graphemes = cursor.code().grapheme_indices(true);
 					state = State::Unsure;
 				} else { keep_going = false }
 			}
@@ -317,9 +321,12 @@ where
 		dbg!(&trickery);
 		if let Some((grapheme, grapheme_kind)) = &trickery {
 			if let State::Unsure = &state {
-				cursor = current;
 				state = match grapheme_kind {
-					GraphemeKind::Ignored => State::Unsure,
+					GraphemeKind::Ignored => {
+						cursor.advance_by(grapheme.len());
+						*graphemes = cursor.code().grapheme_indices(true);
+						State::Unsure
+					},
 					GraphemeKind::Reserved => State::ParsingReserved,
 					GraphemeKind::Other => State::ParsingOther(
 						match *grapheme {
@@ -334,20 +341,23 @@ where
 		}
 		keep_going
 	};
-	let mut graphemes = code.grapheme_indices(true);
+	dbg!(cursor.code());
 	while let Some((current, grapheme)) = graphemes.next() {
-		if !dbg!(do_the_thing(Some(grapheme), current)) { break }
+		dbg!((current, grapheme));
+		if !dbg!(do_the_thing(&mut cursor, Some(grapheme), current, &mut graphemes)) { break }
 	}
 	if graphemes.next().is_none() {
-		do_the_thing(None, code.len());
+		let current = cursor.code().len();
+		do_the_thing(&mut cursor, None, current, &mut graphemes);
 	}
-	(expression_constructor.finish(), &code[cursor..])
+	expression_constructor.finish()
+		.map(|rvalue| (cursor, rvalue))
+		.map_err(|_| cursor.make_error(LineParsingErrorKind::ExpectationError))
 }
 
 fn global_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> {
 	fn bool_bool_binary_op_token<'a>(op: BoolBoolBinaryOp) -> What<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(op)))) }
 	fn bool_float_binary_op_token<'a>(op: BoolFloatBinaryOp) -> What<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(op)))) }
-	fn float_binary_op_token<'a>(op: FloatBinaryOp) -> What<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(op))) }
 	fn pass_to_float_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> {
 		match float_catastrophe(expecting, state, current, next) {
 			Catastrophe::Skipped => Catastrophe::Skipped,
@@ -410,17 +420,6 @@ fn global_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str
 	}
 }
 
-pub fn parse_bool_rvalue<'a>(code: &'a str) -> (BoolRvalue, &'a str) {
-	let (result, code) = parsinate(
-		code, global_catastrophe,
-		ExpressionConstructor::new(bool_get_priority, bool_eval),
-	);
-	match result {
-		BoolOrFloatRvalue::FloatRvalue(..) => panic!(),
-		BoolOrFloatRvalue::BoolRvalue(rvalue) => (rvalue, code),
-	}
-}
-
 fn float_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<FloatRvalue<'a>, FloatUnaryOp, FloatBinaryOp> {
 	fn float_binary_op_token<'a>(op: FloatBinaryOp) -> What<FloatRvalue<'a>, FloatUnaryOp, FloatBinaryOp> { What::Token(Token::BinaryOp(op)) }
 	match state {
@@ -468,9 +467,21 @@ fn float_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str,
 	}
 }
 
-pub fn parse_float_rvalue<'a>(code: &'a str) -> (FloatRvalue, &'a str) {
-	parsinate(
-		code, float_catastrophe,
-		ExpressionConstructor::new(float_get_priority, float_eval),
-	)
+impl<'a> LineCursor<'a> {
+	pub fn parse_float_rvalue(self) -> LineParsingIntermediateResult<'a, FloatRvalue<'a>> {
+		parsinate(
+			self, float_catastrophe,
+			ExpressionConstructor::new(float_get_priority, float_eval),
+		)
+	}
+	pub fn parse_bool_rvalue(self) -> LineParsingIntermediateResult<'a, BoolRvalue<'a>> {
+		let result = parsinate(
+			self, global_catastrophe,
+			ExpressionConstructor::new(bool_get_priority, bool_eval),
+		);
+		match result {
+			Ok((new_self, BoolOrFloatRvalue::BoolRvalue(rvalue))) => Ok((new_self, rvalue)),
+			_ => Err(self.make_error(LineParsingErrorKind::ExpectedBoolRvalue)),
+		}
+	}
 }

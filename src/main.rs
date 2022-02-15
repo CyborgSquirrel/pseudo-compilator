@@ -3,92 +3,375 @@ use expression::*;
 
 // use std::env;
 
-use std::{fs::File, io::Read, iter};
-use itertools::izip;
+use std::{fs::File, io::{Read, Write, BufRead, stdin, stdout, BufReader}};
 use unicode_segmentation::UnicodeSegmentation;
 use std::collections::HashMap;
 
-#[derive(Clone, Copy)]
-// We have one cursor per line.
-struct LineCursor<'a> {
-	code: &'a str,
-	index: usize,
-}
-impl<'a> LineCursor<'a> {
-	fn new(code: &'a str) -> Self {
-		Self { code, index: 0 }
-	}
-	fn code(&self) -> &'a str {
-		&self.code[self.index..]
-	}
-	fn expect_str(mut self, expected: &str) -> LineParsingResult<Self> {
-		if self.code().starts_with(expected) {
-			self.index += expected.len();
-			Ok(self)
-		} else { Err(LineParsingError::ExpectationError) }
-	}
-	fn next_grapheme_matches<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> LineParsingResult<Self> {
-		let next = self.code().grapheme_indices(true).next();
-			
-		if let Some(next) = next {
-			self.index += next.1.len();
-			if predicate(next.1) { Ok(self) }
-			else { Err(LineParsingError::ExpectationError) }
-		} else { Err(LineParsingError::ExpectationError) }
-	}
-	fn skip_spaces(mut self) -> Self {
-		let offset = {
-			let code = self.code();
-			code.grapheme_indices(true)
-				.find(|(_, x)| *x != " ")
-				.map(|(i, _)| i)
-				.unwrap_or(code.len())
-		};
-		self.index += offset;
-		self
-	}
-	fn read_until<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> (Self, &'a str) {
-		let code = self.code();
-		let end = code.grapheme_indices(true)
-			.find(|(_, x)| predicate(x))
-			.map(|(i, _)| i)
-			.unwrap_or(code.len());
-		self.index += end;
-		(self, &code[..end])
-	}
-	fn parse_lvalue(self) -> LineParsingResult<(Self, Lvalue<'a>)> {
-		let (new_self, name) = self.skip_spaces().read_until(|x| not_variable(x));
-		if !name.is_empty() {
-			Ok((new_self, Lvalue(name)))
-		} else { Err(LineParsingError::ExpectationError) }
-	}
-	fn expect_end(self) -> LineParsingResult<()> {
-		if self.code.len() == self.index {
-			Ok(())
-		} else { Err(LineParsingError::ExpectationError) }
+#[derive(Debug)]
+pub enum GraphemeKind { Reserved, Ignored, Other }
+pub fn get_grapheme_kind(grapheme: &str) -> Option<GraphemeKind> {
+	match grapheme {
+		"+"|"-"|"*"|"/"|"%"|
+		"="|"!"|"<"|">"|
+		"("|")"
+			=> Some(GraphemeKind::Reserved),
+		" "
+			=> Some(GraphemeKind::Ignored),
+		","
+			=> None,
+		_
+			=> Some(GraphemeKind::Other),
 	}
 }
 
 #[derive(Debug)]
-enum LineParsingError {
+enum LineParsingErrorKind {
+	ExpectedStr(&'static str),
+	ExpectedGrapheme(&'static str),
+	ExpectedAnyGrapheme,
+	ExpectedEnd,
+	ExpectedLvalue,
+	ExpectedScrieParam,
+	ExpectedBoolRvalue,
+	ExpectedFloatRvalue,
 	ExpectationError,
 }
+
+#[derive(Debug)]
+struct LineParsingError(usize, LineParsingErrorKind);
+type LineParsingIntermediateResult<'a, T> = Result<(LineCursor<'a>, T), LineParsingError>;
 type LineParsingResult<T> = Result<T, LineParsingError>;
 
-type ParsingResult<T> = Result<T, ()>;
+#[derive(Debug, Clone, Copy)]
+struct LineCursor<'a> {
+	pub code: &'a str,
+	pub index: usize,
+	pub grapheme: usize,
+}
+impl<'a> LineCursor<'a> {
+	fn new(code: &'a str) -> Self {
+		Self { code, index: 0, grapheme: 0 }
+	}
+	fn make_error(&self, kind: LineParsingErrorKind) -> LineParsingError {
+		LineParsingError(self.grapheme, kind)
+	}
+	fn code(&self) -> &'a str {
+		&self.code[self.index..]
+	}
+	fn code_until(&self, until: usize) -> &'a str {
+		&self.code[self.index..self.index+until]
+	}
+	fn advance_by(&mut self, amount: usize) {
+		self.grapheme += self.code_until(amount).graphemes(true).count();
+		self.index += amount;
+	}
+	fn expect_str(mut self, expected: &'static str) -> LineParsingIntermediateResult<'a, ()> {
+		if self.code().starts_with(expected) {
+			self.advance_by(expected.len());
+			Ok((self, ()))
+		} else { Err(self.make_error(LineParsingErrorKind::ExpectedStr(expected))) }
+	}
+	fn skip_spaces(mut self) -> Self {
+		let mut graphemes = 0;
+		let offset = {
+			let code = self.code();
+			code.grapheme_indices(true)
+				.find(|(_, x)| { graphemes += 1; *x != " "})
+				.map(|(i, _)| i)
+				.unwrap_or(code.len())
+		};
+		self.grapheme += graphemes;
+		self.index += offset;
+		self
+	}
+	fn read_while<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> (Self, &'a str) {
+		let mut graphemes = 0;
+		let offset = self.code().grapheme_indices(true)
+			.skip_while(|(_, x)| { graphemes += 1; predicate(x)})
+			.next()
+			.map(|(i, _)| i)
+			.unwrap_or(self.code().len());
+		let result = self.code_until(offset);
+		self.grapheme += graphemes;
+		self.index += offset;
+		(self, result)
+	}
+	fn parse_lvalue(self) -> LineParsingIntermediateResult<'a, Lvalue<'a>> {
+		let (new_self, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+		if !name.is_empty() {
+			Ok((new_self, Lvalue(name)))
+		} else { Err(self.make_error(LineParsingErrorKind::ExpectedLvalue)) }
+	}
+	fn expect_end(self) -> LineParsingResult<()> {
+		if self.code.len() == self.index {
+			Ok(())
+		} else { Err(self.make_error(LineParsingErrorKind::ExpectedEnd)) }
+	}
+	fn parse_second_step_citeste(mut self) -> LineParsingResult<Instructiune<'a>> {
+		let mut lvalues = Vec::new();
+		let mut done = false;
+		while !done {
+			let (new_self, lvalue) = self.parse_lvalue()?;
+			self = new_self;
+			lvalues.push(lvalue);
+			self = self.skip_spaces();
+			match self.expect_grapheme(",") {
+				Ok((new_self, _)) => self = new_self,
+				Err(..) => done = true,
+			}
+		}
+		self.skip_spaces().expect_end()?;
+		Ok(Instructiune::Citeste(lvalues))
+	}
+	fn next_grapheme(mut self) -> LineParsingIntermediateResult<'a, &'a str> {
+		let grapheme = self.code()
+			.graphemes(true)
+			.next();
+		if let Some(grapheme) = grapheme {
+			self.index += grapheme.len();
+			self.grapheme += 1;
+			Ok((self, grapheme))
+		} else { Err(self.make_error(LineParsingErrorKind::ExpectedAnyGrapheme)) }
+	}
+	fn expect_grapheme(self, expected_grapheme: &'static str) -> LineParsingIntermediateResult<'a, ()> {
+		let err = LineParsingErrorKind::ExpectedGrapheme(expected_grapheme);
+		if let Ok((new_self, grapheme)) = self.next_grapheme() {
+			if grapheme == expected_grapheme { Ok((new_self, ())) }
+			else { Err(self.make_error(err)) }
+		} else { Err(self.make_error(err)) }
+	}
+	fn parse_scrie_param(self) -> LineParsingIntermediateResult<'a, ScrieParam<'a>> {
+		match self.next_grapheme().map_err(|_| self.make_error(LineParsingErrorKind::ExpectedScrieParam))? {
+			(new_self, "'") => {
+				let (new_self, character) = new_self.next_grapheme()?;
+				let (new_self, _) = new_self.expect_grapheme("'")?;
+				Ok((new_self, ScrieParam::CharLiteral(character)))
+			}
+			(new_self, "\"") => {
+				let (new_self, string) = new_self.read_while(|grapheme| grapheme != "\"");
+				let (new_self, _) = new_self.expect_grapheme("\"")?;
+				Ok((new_self, ScrieParam::StringLiteral(string)))
+			}
+			_ => {
+				let (new_self, rvalue) = self.parse_float_rvalue()?;
+				Ok((new_self, ScrieParam::Rvalue(rvalue)))
+			}
+		}
+	}
+	fn parse_second_step_scrie(mut self) -> LineParsingResult<Instructiune<'a>> {
+		let mut params = Vec::new();
+		let mut done = false;
+		while !done {
+			let (new_self, param) = self.skip_spaces().parse_scrie_param()?;
+			params.push(param);
+			self = new_self.skip_spaces();
+			match self.expect_grapheme(",") {
+				Ok((new_self, _)) => self = new_self,
+				Err(..) => done = true,
+			}
+		}
+		self.skip_spaces().expect_end()?;
+		Ok(Instructiune::Scrie(params))
+	}
+	
+	fn parse_second_step_lvalue(self, lvalue: Lvalue<'a>) -> LineParsingResult<Instructiune<'a>> {
+		let (new_self, _) = self.skip_spaces().expect_str("<-")?;
+		if let Ok((new_self, _)) = new_self.expect_grapheme(">") {
+			let (new_self, other_lvalue) = new_self.skip_spaces().parse_lvalue()?;
+			new_self.skip_spaces().expect_end()?;
+			Ok(Instructiune::Interschimbare(lvalue, other_lvalue))
+		} else {
+			let (new_self, rvalue) = new_self.skip_spaces().parse_float_rvalue()?;
+			new_self.skip_spaces().expect_end()?;
+			Ok(Instructiune::Atribuire(lvalue, rvalue))
+		}
+	}
+	
+	fn parse_second_step_pentru(self) -> LineParsingResult<Instructiune<'a>> {
+		let (new_self, lvalue) =  self.skip_spaces().parse_lvalue()?;
+		let (new_self, _) = new_self.skip_spaces().expect_str("<-")?;
+		let (new_self, start) = new_self.skip_spaces().parse_float_rvalue()?;
+		
+		let (new_self, _) = new_self.skip_spaces().expect_str(",")?;
+		let (new_self, end) = new_self.skip_spaces().parse_float_rvalue()?;
+		
+		let (new_self, increment) = if let Ok((new_self, _)) = new_self.skip_spaces().expect_str(",") {
+			new_self.parse_float_rvalue().map(|(new_self, increment)| (new_self, Some(increment)))?
+		} else { (new_self, None) };
+		
+		let (new_self, _) = new_self.skip_spaces().expect_str("executa")?;
+		new_self.skip_spaces().expect_end()?;
+		
+		Ok(Instructiune::PentruExecuta(lvalue, start, end, increment, Vec::new()))
+	}
+	
+	fn parse_second_step_daca(self) -> LineParsingResult<Instructiune<'a>> {
+		let (new_self, rvalue) = self.skip_spaces().parse_bool_rvalue()?;
+		let (new_self, _) = new_self.skip_spaces().expect_str("atunci")?;
+		new_self.skip_spaces().expect_end()?;
+		
+		Ok(Instructiune::DacaAtunciAltfel(rvalue, Vec::new(), None))
+	}
+	
+	fn parse_second_step_cat_timp(self) -> LineParsingResult<Instructiune<'a>> {
+		let (new_self, _) = self.expect_str(" timp ")?;
+		let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
+		let (new_self, _) = new_self.skip_spaces().expect_str("executa")?;
+		new_self.skip_spaces().expect_end()?;
+		
+		Ok(Instructiune::CatTimpExecuta(rvalue, Vec::new()))
+	}
+	
+	fn parse_pana_cand(self, instructions: Vec<Instructiune<'a>>) -> LineParsingResult<Instructiune<'a>> {
+		let (new_self, _) = self.expect_str("pana cand ")?;
+		let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
+		new_self.skip_spaces().expect_end()?;
+		
+		Ok(Instructiune::RepetaPanaCand(instructions, rvalue))
+	}
+	
+	fn parse_altfel(self) -> LineParsingResult<()> {
+		let (new_self, _) = self.expect_str("altfel")?;
+		new_self.skip_spaces().expect_end()?;
+		Ok(())
+	}
+	
+	fn parse_repeta(self) -> LineParsingResult<()> {
+		let (new_self, _) = self.expect_str("repeta")?;
+		new_self.skip_spaces().expect_end()?;
+		Ok(())
+	}
+	
+	fn parse_first_step(self) -> LineParsingResult<Instructiune<'a>> {
+		let (cursor, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+		match dbg!(name) {
+			"daca" =>
+				cursor.parse_second_step_daca(),
+			"cat" =>
+				cursor.parse_second_step_cat_timp(),
+			"pentru" =>
+				cursor.parse_second_step_pentru(),
+			"scrie" =>
+				cursor.parse_second_step_scrie(),
+			"citeste" =>
+				cursor.parse_second_step_citeste(),
+			x =>
+				cursor.parse_second_step_lvalue(Lvalue(x)),
+		}
+	}
+}
 
+#[derive(Debug)]
+enum ParsingErrorKind {
+	LineParsingError(LineParsingErrorKind),
+	AltfelWithoutDaca,
+	DacaAlreadyHasAltfel,
+}
+#[derive(Debug)]
+struct ParsingError(usize, usize, ParsingErrorKind);
+type IntermediateParsingResult<'a> = Result<Cursor<'a>, ParsingError>;
+type ParsingResult<T> = Result<T, ParsingError>;
+
+#[derive(Debug, Clone, Copy)]
 struct Cursor<'a> {
 	code: &'a str,
 	line: usize,
+	index: usize,
 }
 
 impl<'a> Cursor<'a> {
 	fn new(code: &'a str) -> Self {
-		Self { code, line: 0 }
+		Self { code, line: 0, index: 0 }
+	}
+	fn next_line(mut self) -> Option<(Self, &'a str)> {
+		if let Some(offset) = self.code[self.index..].find("\n") {
+			let line = &self.code[self.index..self.index+offset];
+			self.index += offset + "\n".len();
+			self.line += 1;
+			Some((self, line))
+		} else if self.index < self.code.len() {
+			let line = &self.code[self.index..];
+			self.index = self.code.len();
+			self.line += 1;
+			Some((self, line))
+		} else { None }
+	}
+	fn make_error_from_line(&self, line_parsing_error: LineParsingError) -> ParsingError {
+		ParsingError(
+			self.line,
+			line_parsing_error.0,
+			ParsingErrorKind::LineParsingError(line_parsing_error.1)
+		)
+	}
+	fn make_error(&self, kind: ParsingErrorKind) -> ParsingError {
+		ParsingError(self.line, 0, kind)
+	}
+	fn parse(mut self, instructions: &mut Vec<Instructiune<'a>>, indent: usize) -> IntermediateParsingResult<'a> {
+		enum Expecting<'a> { Anything, PanaCand(Vec<Instructiune<'a>>) }
+		let mut expecting = Expecting::Anything;
+		while let Some((new_self, line)) = self.next_line() {
+			if line != "" {
+				let current_indent = line
+					.graphemes(true)
+					.take_while(|x| *x == "\t")
+					.count();
+				// TODO: take care of case where current_indent is bigger by more than one than indent
+				// TODO: user-specified separator for scrie
+				// TODO: unary operators
+				// TODO: paranthese unary operators
+				if current_indent != indent {
+					break;
+				} else {
+					self = new_self;
+					let line = &line[current_indent*"\t".len()..];
+					let line_cursor = LineCursor::new(line);
+					println!("{:?}", line);
+					expecting = match expecting {
+						Expecting::Anything => {
+							if line_cursor.parse_altfel().is_ok() {
+								if let Some(Instructiune::DacaAtunciAltfel(_, _, instructions)) = instructions.last_mut() {
+									if instructions.is_some() { return Err(self.make_error(ParsingErrorKind::DacaAlreadyHasAltfel)) }
+									*instructions = Some({
+										let mut instructions = Vec::new();
+										self = self.parse(&mut instructions, indent+1)?;
+										instructions
+									});
+								} else { return Err(self.make_error(ParsingErrorKind::AltfelWithoutDaca)) }
+								Expecting::Anything
+							} else if line_cursor.parse_repeta().is_ok() {
+								let mut instructions = Vec::new();
+								self = self.parse(&mut instructions, indent+1)?;
+								Expecting::PanaCand(instructions)
+							} else {
+								let mut instruction = line_cursor.parse_first_step()
+									.map_err(|err| self.make_error_from_line(err))?;
+								match &mut instruction {
+									Instructiune::DacaAtunciAltfel(_, instructions, _)
+									| Instructiune::CatTimpExecuta(_, instructions)
+									| Instructiune::PentruExecuta(_, _, _, _, instructions)
+									| Instructiune::RepetaPanaCand(instructions, _)
+										=> self = self.parse(instructions, indent+1)?,
+									Instructiune::Atribuire(..)
+									| Instructiune::Interschimbare(..)
+									| Instructiune::Scrie(..)
+									| Instructiune::Citeste(..)
+										=> (), // do nothing 
+								}
+								instructions.push(instruction);
+								Expecting::Anything
+							}
+						}
+						Expecting::PanaCand(pana_cand_instructions) => {
+							instructions.push(line_cursor.parse_pana_cand(pana_cand_instructions).unwrap());
+							Expecting::Anything
+						}
+					}
+				}
+			}
+		}
+		Ok(self)
 	}
 }
-
-fn is_whitespace(x: &(usize, &str)) -> bool { x.1 == " "  }
 
 #[derive(Debug)]
 enum ScrieParam<'a> {
@@ -108,52 +391,52 @@ enum Instructiune<'a> {
 	RepetaPanaCand(Vec<Instructiune<'a>>, BoolRvalue<'a>),
 }
 
-fn float_evaluate(
-	variables: &HashMap<&str, f32>,
-	rvalue: &FloatRvalue,
-) -> f32 {
+fn float_evaluate<'a>(
+	variables: &HashMap<&'a str, f32>,
+	rvalue: &FloatRvalue<'a>,
+) -> RuntimeResult<'a, f32> {
 	match rvalue {
-		FloatRvalue::Literal(x) => *x,
-		FloatRvalue::Lvalue(x) => *variables.get(x.0).unwrap(),
+		FloatRvalue::Literal(x) => Ok(*x),
+		FloatRvalue::Lvalue(x) => variables.get(x.0).cloned().ok_or(RuntimeError::UndefinedLvalue(x.0)),
 		FloatRvalue::Unary(op, x) => {
-			let x = float_evaluate(variables, x);
-			match *op {
+			let x = float_evaluate(variables, x)?;
+			Ok(match *op {
 				FloatUnaryOp::Ident => x,
 				FloatUnaryOp::Neg => -x,
 				FloatUnaryOp::Whole => x.floor(),
-			}
+			})
 		}
 		FloatRvalue::Binary(op, x, y) => {
-			let x = float_evaluate(variables, x);
-			let y = float_evaluate(variables, y);
-			match *op {
+			let x = float_evaluate(variables, x)?;
+			let y = float_evaluate(variables, y)?;
+			Ok(match *op {
 				FloatBinaryOp::Add => x+y,
 				FloatBinaryOp::Sub => x-y,
 				FloatBinaryOp::Mul => x*y,
 				FloatBinaryOp::Div => x/y,
 				FloatBinaryOp::Rem => ((x as i32) % (y as i32)) as f32,
-			}
+			})
 		}
 	}
 }
 
 fn bool_evaluate<'a>(
-	variables: &HashMap<&str, f32>,
-	rvalue: &BoolRvalue,
-) -> bool {
+	variables: &HashMap<&'a str, f32>,
+	rvalue: &BoolRvalue<'a>,
+) -> RuntimeResult<'a, bool> {
 	match rvalue {
 		BoolRvalue::BoolBoolBinaryOp(op, lhs, rhs) => {
-			let lhs = bool_evaluate(variables, lhs);
-			let rhs = bool_evaluate(variables, rhs);
-			match op {
+			let lhs = bool_evaluate(variables, lhs)?;
+			let rhs = bool_evaluate(variables, rhs)?;
+			Ok(match op {
 				BoolBoolBinaryOp::And => lhs && rhs,
 				BoolBoolBinaryOp::Or => lhs || rhs,
-			}
+			})
 		}
 		BoolRvalue::BoolFloatBinaryOp(op, lhs, rhs) => {
-			let lhs = float_evaluate(variables, lhs);
-			let rhs = float_evaluate(variables, rhs);
-			match op {
+			let lhs = float_evaluate(variables, lhs)?;
+			let rhs = float_evaluate(variables, rhs)?;
+			Ok(match op {
 				BoolFloatBinaryOp::Equ => lhs == rhs,
 				BoolFloatBinaryOp::Nequ => lhs != rhs,
 				BoolFloatBinaryOp::Lt => lhs < rhs,
@@ -161,24 +444,31 @@ fn bool_evaluate<'a>(
 				BoolFloatBinaryOp::Lte => lhs <= rhs,
 				BoolFloatBinaryOp::Gte => lhs >= rhs,
 				BoolFloatBinaryOp::Divides => (lhs as i32) % (rhs as i32) == 0,
-			}
+			})
 		}
 	}
 }
 
-fn execute<'a>(
+#[derive(Debug)]
+enum RuntimeError<'a> {
+	UndefinedLvalue(&'a str),
+	InputParsingError(String),
+}
+type RuntimeResult<'a, T> = Result<T, RuntimeError<'a>>;
+
+fn execute<'a, Input: BufRead, Output: Write>(
 	variables: &mut HashMap<&'a str, f32>,
+	input: &mut Input, output: &mut Output,
 	instructions: &Vec<Instructiune<'a>>,
-) {
-	use std::io::stdin;
+) -> RuntimeResult<'a, ()> {
 	for instruction in instructions {
 		match instruction {
 			Instructiune::Atribuire(lvalue, rvalue) => {
-				variables.insert(lvalue.0, float_evaluate(variables, rvalue));
+				variables.insert(lvalue.0, float_evaluate(variables, rvalue)?);
 			}
 			Instructiune::Interschimbare(lt_lvalue, rt_lvalue) => {
-				let lt_ptr = variables.get_mut(lt_lvalue.0).unwrap() as *mut f32;
-				let rt_ptr = variables.get_mut(rt_lvalue.0).unwrap() as *mut f32;
+				let lt_ptr = variables.get_mut(lt_lvalue.0).ok_or(RuntimeError::UndefinedLvalue(lt_lvalue.0))? as *mut f32;
+				let rt_ptr = variables.get_mut(rt_lvalue.0).ok_or(RuntimeError::UndefinedLvalue(lt_lvalue.0))? as *mut f32;
 				unsafe {
 					std::ptr::swap(lt_ptr, rt_ptr);
 				}
@@ -186,422 +476,92 @@ fn execute<'a>(
 			Instructiune::Scrie(params) => {
 				for param in params {
 					let value = match param {
-						ScrieParam::Rvalue(rvalue) => float_evaluate(variables, rvalue).to_string(),
+						ScrieParam::Rvalue(rvalue) => float_evaluate(variables, rvalue)?.to_string(),
 						ScrieParam::CharLiteral(chr) => chr.to_string(),
 						ScrieParam::StringLiteral(string) => string.to_string(),
 					};
-					print!("{}", value);
+					output.write(value.as_bytes()).unwrap();
 				}
-				print!("\n");
+				output.write("\n".as_bytes()).unwrap();
 			}
 			Instructiune::Citeste(lvalues) => {
-				let mut input = String::new();
+				let mut buf  = String::new();
 				for lvalue in lvalues {
-					stdin().read_line(&mut input).unwrap();
-					variables.insert(lvalue.0, input.trim().parse().unwrap());
-					input.clear();
+					input.read_line(&mut buf).unwrap();
+					let value = buf.trim().parse().map_err(|_| RuntimeError::InputParsingError(buf.clone()))?;
+					variables.insert(lvalue.0, value);
+					buf.clear();
 				}
 			}
 			Instructiune::DacaAtunciAltfel(conditie, atunci, altfel) => {
-				if bool_evaluate(variables, conditie) {
-					execute(variables, &atunci);
+				if bool_evaluate(variables, conditie)? {
+					execute(variables, input, output, &atunci)?;
 				} else {
 					if let Some(altfel) = altfel {
-						execute(variables, &altfel);
+						execute(variables, input, output, &altfel)?;
 					}
 				}
 			}
 			Instructiune::CatTimpExecuta(conditie, executa) => {
-				while bool_evaluate(variables, conditie) {
-					execute(variables, executa);
+				while bool_evaluate(variables, conditie)? {
+					execute(variables, input, output, executa)?;
 				}
 			}
 			Instructiune::PentruExecuta(contor, start, stop, increment, executa) => {
-				variables.insert(contor.0, float_evaluate(variables, start));
-				let stop = float_evaluate(variables, stop);
-				let increment = increment
-					.as_ref()
-					.map(|x| float_evaluate(variables, x))
-					.unwrap_or(1f32);
-				while *variables.get(contor.0).unwrap() != stop {
-					execute(variables, executa);
-					*variables.get_mut(contor.0).unwrap() += increment;
+				variables.insert(contor.0, float_evaluate(variables, start)?);
+				let stop = float_evaluate(variables, stop)?;
+				let increment = if let Some(increment) = increment {
+					float_evaluate(variables, increment)?
+				} else { 1f32 };
+				while variables.get(contor.0).cloned().ok_or(RuntimeError::UndefinedLvalue(contor.0))? != stop {
+					execute(variables, input, output, executa)?;
+					*variables.get_mut(contor.0).ok_or(RuntimeError::UndefinedLvalue(contor.0))? += increment;
 				}
-				if *variables.get(contor.0).unwrap() == stop {
-					execute(variables, executa);
+				if *variables.get(contor.0).ok_or(RuntimeError::UndefinedLvalue(contor.0))? == stop {
+					execute(variables, input, output, executa)?;
 				}
 			}
 			Instructiune::RepetaPanaCand(repeta, conditie) => {
-				execute(variables, repeta);
-				while !bool_evaluate(variables, conditie) {
-					execute(variables, repeta);
+				execute(variables, input, output, repeta)?;
+				while !bool_evaluate(variables, conditie)? {
+					execute(variables, input, output, repeta)?;
 				}
 			}
 		}
 	}
+	Ok(())
 }
 
-fn not_variable(grapheme: &str) -> bool {
-	return matches!(
-		grapheme,
-		" "
-		|"<"|">"|"="|"!"
-		|"-"|"+"|"*"|"/"|"%"
-		|"("|")"
-		|","|";"
-		|"\""|"'"
-	);
-}
+// fn test_execute() {
+// 	let instructions = vec![
+// 		Instructiune::Atribuire(Lvalue("a"), FloatRvalue::Literal(10f32)),
+// 		Instructiune::Atribuire(Lvalue("b"), FloatRvalue::Literal(5f32)),
+// 		Instructiune::Interschimbare(Lvalue("a"), Lvalue("b")),
+// 		Instructiune::Scrie(
+// 			vec![
+// 				ScrieParam::Rvalue(
+// 					FloatRvalue::Binary(
+// 						FloatBinaryOp::Add,
+// 						Box::new(FloatRvalue::Binary(
+// 							FloatBinaryOp::Add,
+// 							Box::new(FloatRvalue::Lvalue(Lvalue("a"))),
+// 							Box::new(FloatRvalue::Lvalue(Lvalue("b"))),
+// 						)),
+// 						Box::new(FloatRvalue::Literal(3f32)),
+// 					)
+// 				)
+// 			]
+// 		)
+// 	];
 
+// 	let mut variables = HashMap::new();
+// 	execute(&mut variables, &instructions);
+// }
 
-
-fn parse_scrie_param<'a>(code: &'a str) -> (ScrieParam<'a>, &'a str) {
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	match graphemes.next() {
-		Some((_, "'")) => {
-			let chr = graphemes.next().unwrap().1;
-			assert!(matches!(graphemes.next(), Some((_, "'"))));
-			let code =
-				if let Some((i, _)) = graphemes.next() { &code[i..] }
-				else { &code[code.len()..] };
-			(ScrieParam::CharLiteral(chr), code)
-		}
-		Some((start, "\"")) => {
-			let start = start + "\"".len();
-			let mut graphemes = graphemes.skip_while(|x| x.1 != "\"");
-			let next = graphemes.next().unwrap();
-			assert!(next.1 == "\"");
-			let end = next.0;
-			(ScrieParam::StringLiteral(&code[start..end]), &code[end+"\"".len()..])
-		}
-		Some(_) => {
-			let (rvalue, code) = parse_float_rvalue(code);
-			(ScrieParam::Rvalue(rvalue), code)
-		}
-		None => panic!(),
-	}
-}
-
-fn parse_second_step_scrie<'a>(mut code: &'a str) -> Instructiune<'a> {
-	let mut params = Vec::new();
-	let mut done = false;
-	while !done {
-		let (param, new_code) = parse_scrie_param(code);
-		params.push(param);
-		code = new_code;
-		let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-		match graphemes.next() {
-			Some((i, ",")) => code = &code[i+",".len()..],
-			None => done = true,
-			_ => panic!(),
-		}
-	}
-	Instructiune::Scrie(params)
-}
-
-fn parse_lvalue<'a>(code: &'a str) -> (Lvalue, &'a str) {
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	let next = graphemes.next().unwrap();
-	
-	let cursor = next.0;
-	let graphemes = iter::once(next).chain(graphemes);
-	let mut graphemes = graphemes.skip_while(|x| !not_variable(x.1));
-	
-	let end = 
-		if let Some((end, _)) = graphemes.next() { end }
-		else { code.len() };
-	
-	(Lvalue(&code[cursor..end]), &code[end..])
-}
-
-fn parse_second_step_citeste<'a>(mut code: &'a str) -> Instructiune<'a> {
-	let mut lvalues = Vec::new();
-	let mut done = false;
-	while !done {
-		let (lvalue, new_code) = parse_lvalue(code);
-		lvalues.push(lvalue);
-		code = new_code;
-		let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-		match graphemes.next() {
-			Some((i, ",")) => code = &code[i+",".len()..],
-			None => done = true,
-			_ => panic!(),
-		}
-	}
-	Instructiune::Citeste(lvalues)
-}
-
-fn parse_second_step_lvalue<'a>(mut cursor: LineCursor<'a>, lvalue: Lvalue<'a>) -> Instructiune<'a> {
-	let cursor = cursor
-		.skip_spaces()
-		.expect_str("<-").unwrap();
-	if let Ok(cursor) = cursor.next_grapheme_matches(|x| x == ">") {
-		let other_lvalue = cursor.parse_lvalue().unwrap().1;
-		Instructiune::Interschimbare(lvalue, other_lvalue)
-	} else {
-		let rvalue = parse_float_rvalue(cursor.code()).0;
-		Instructiune::Atribuire(lvalue, rvalue)
-	}
-}
-
-fn parse_second_step_pentru<'a>(code: &'a str) -> Instructiune<'a> {
-	let (lvalue, code) = parse_lvalue(code);
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	assert!(matches!(graphemes.next(), Some((_, "<"))));
-	assert!(matches!(graphemes.next(), Some((_, "-"))));
-	let next = graphemes.next().unwrap();
-	let code = &code[next.0..];
-	let (start, code) = parse_float_rvalue(code);
-	
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	let next = graphemes.next().unwrap();
-	assert!(next.1 == ",");
-	
-	let code = &code[next.0 + next.1.len()..];
-	let (end, code) = parse_float_rvalue(code);
-	
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	
-	let mut next = graphemes.next().unwrap();
-	let (increment, mut graphemes) = if next.1 == "," {
-		let code = &code[next.0 + next.1.len()..];
-		let (increment, code) = parse_float_rvalue(code);
-		let mut graphemes = code.grapheme_indices(true)
-			.skip_while(is_whitespace);
-		next = graphemes.next().unwrap();
-		(Some(increment), graphemes)
-	} else { (None, graphemes) };
-	
-	assert!(next.1 == "e");
-	assert!(matches!(graphemes.next(), Some((_, "x"))));
-	assert!(matches!(graphemes.next(), Some((_, "e"))));
-	assert!(matches!(graphemes.next(), Some((_, "c"))));
-	assert!(matches!(graphemes.next(), Some((_, "u"))));
-	assert!(matches!(graphemes.next(), Some((_, "t"))));
-	assert!(matches!(graphemes.next(), Some((_, "a"))));
-	
-	let mut graphemes = graphemes.skip_while(is_whitespace);
-	assert!(graphemes.next().is_none());
-	
-	Instructiune::PentruExecuta(lvalue, start, end, increment, Vec::new())
-}
-
-fn parse_second_step_daca(code: &str) -> Instructiune {
-	let (rvalue, code) = parse_bool_rvalue(code);
-	
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	
-	assert!(matches!(graphemes.next(), Some((_, "a"))));
-	assert!(matches!(graphemes.next(), Some((_, "t"))));
-	assert!(matches!(graphemes.next(), Some((_, "u"))));
-	assert!(matches!(graphemes.next(), Some((_, "n"))));
-	assert!(matches!(graphemes.next(), Some((_, "c"))));
-	assert!(matches!(graphemes.next(), Some((_, "i"))));
-	
-	let mut graphemes = graphemes.skip_while(is_whitespace);
-	
-	assert!(graphemes.next().is_none());
-
-	Instructiune::DacaAtunciAltfel(rvalue, Vec::new(), None)
-}
-
-fn parse_second_step_cat_timp<'a>(code: &'a str) -> Instructiune<'a> {
-	let mut graphemes = code.grapheme_indices(true);
-	assert!(matches!(graphemes.next(), Some((_, " "))));
-	assert!(matches!(graphemes.next(), Some((_, "t"))));
-	assert!(matches!(graphemes.next(), Some((_, "i"))));
-	assert!(matches!(graphemes.next(), Some((_, "m"))));
-	assert!(matches!(graphemes.next(), Some((_, "p"))));
-	let next = graphemes.next().unwrap();
-	assert!(next.1 == " ");
-	
-	let (condition, code) = parse_bool_rvalue(&code[next.0..]);
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	assert!(matches!(graphemes.next(), Some((_, "e"))));
-	assert!(matches!(graphemes.next(), Some((_, "x"))));
-	assert!(matches!(graphemes.next(), Some((_, "e"))));
-	assert!(matches!(graphemes.next(), Some((_, "c"))));
-	assert!(matches!(graphemes.next(), Some((_, "u"))));
-	assert!(matches!(graphemes.next(), Some((_, "t"))));
-	assert!(matches!(graphemes.next(), Some((_, "a"))));
-	
-	let mut graphemes = graphemes.skip_while(is_whitespace);
-	assert!(graphemes.next().is_none());
-	
-	Instructiune::CatTimpExecuta(condition, Vec::new())
-}
-
-fn parse_altfel(code: &str) -> bool {
-	let mut graphemes = code.grapheme_indices(true);
-	let mut answer = true;
-	answer &= matches!(graphemes.next(), Some((_, "a")));
-	answer &= matches!(graphemes.next(), Some((_, "l")));
-	answer &= matches!(graphemes.next(), Some((_, "t")));
-	answer &= matches!(graphemes.next(), Some((_, "f")));
-	answer &= matches!(graphemes.next(), Some((_, "e")));
-	answer &= matches!(graphemes.next(), Some((_, "l")));
-	
-	let mut graphemes = graphemes.skip_while(is_whitespace);
-	answer &= graphemes.next().is_none();
-	
-	answer
-}
-
-fn parse_repeta(code: &str) -> bool {
-	let mut graphemes = code.grapheme_indices(true);
-	let mut answer = true;
-	answer &= matches!(graphemes.next(), Some((_, "r")));
-	answer &= matches!(graphemes.next(), Some((_, "e")));
-	answer &= matches!(graphemes.next(), Some((_, "p")));
-	answer &= matches!(graphemes.next(), Some((_, "e")));
-	answer &= matches!(graphemes.next(), Some((_, "t")));
-	answer &= matches!(graphemes.next(), Some((_, "a")));
-	
-	let mut graphemes = graphemes.skip_while(is_whitespace);
-	answer &= graphemes.next().is_none();
-	
-	answer
-}
-
-fn parse_pana_cand<'a>(code: &'a str, instructions: Vec<Instructiune<'a>>) -> Instructiune<'a> {
-	let mut graphemes = code.grapheme_indices(true);
-	assert!(matches!(graphemes.next(), Some((_, "p"))));
-	assert!(matches!(graphemes.next(), Some((_, "a"))));
-	assert!(matches!(graphemes.next(), Some((_, "n"))));
-	assert!(matches!(graphemes.next(), Some((_, "a"))));
-	assert!(matches!(graphemes.next(), Some((_, " "))));
-	assert!(matches!(graphemes.next(), Some((_, "c"))));
-	assert!(matches!(graphemes.next(), Some((_, "a"))));
-	assert!(matches!(graphemes.next(), Some((_, "n"))));
-	assert!(matches!(graphemes.next(), Some((_, "d"))));
-	let next = graphemes.next().unwrap();
-	
-	let code = &code[next.0..];
-	let (condition, code) = parse_bool_rvalue(code);
-	let mut graphemes = code.grapheme_indices(true).skip_while(is_whitespace);
-	assert!(graphemes.next().is_none());
-	
-	Instructiune::RepetaPanaCand(instructions, condition)
-}
-
-fn parse_first_step<'a>(cursor: LineCursor<'a>) -> Instructiune<'a> {
-	let (cursor, name) = cursor.read_until(not_variable);
-	dbg!(cursor.code());
-	match dbg!(name) {
-		"daca" =>
-			parse_second_step_daca(cursor.code()),
-		"cat" =>
-			parse_second_step_cat_timp(cursor.code()),
-		"pentru" =>
-			parse_second_step_pentru(cursor.code()),
-		"scrie" =>
-			parse_second_step_scrie(cursor.code()),
-		"citeste" =>
-			parse_second_step_citeste(cursor.code()),
-		x =>
-			parse_second_step_lvalue(cursor, Lvalue(x)),
-	}
-}
-
-fn parse<'a>(mut code: &'a str, instructions: &mut Vec<Instructiune<'a>>, indent: usize) -> &'a str {
-	enum Expecting<'a> { Anything, PanaCand(Vec<Instructiune<'a>>) }
-	let mut expecting = Expecting::Anything;
-	let mut cursor = 0;
-	let mut lines = code.split("\n");
-	while let Some(line) = lines.next() {
-		if line != "" {
-			let current_indent = line
-				.graphemes(true)
-				.take_while(|x| *x == "\t")
-				.count();
-			// TODO: take care of case where current_indent is bigger by more than one than indent
-			// TODO: user-specified separator for scrie
-			// TODO: unary operators
-			// TODO: paranthese unary operators
-			if current_indent != indent {
-				break;
-			} else {
-				cursor += line.len() + "\n".len();
-				let line = &line[current_indent*"\t".len()..];
-				println!("{:?}", line);
-				expecting = match expecting {
-					Expecting::Anything => {
-						if parse_altfel(line) {
-							if let Some(Instructiune::DacaAtunciAltfel(_, _, instructions)) = instructions.last_mut() {
-								assert!(instructions.is_none());
-								*instructions = Some({
-									let mut instructions = Vec::new();
-									code = parse(&code[cursor..], &mut instructions, indent+1);
-									cursor = 0;
-									lines = code.split("\n");
-									instructions
-								});
-							} else { panic!() }
-							Expecting::Anything
-						} else if parse_repeta(line) {
-							let mut instructions = Vec::new();
-							code = parse(&code[cursor..], &mut instructions, indent+1);
-							cursor = 0;
-							lines = code.split("\n");
-							Expecting::PanaCand(instructions)
-						} else {
-							let other_cursor = LineCursor::new(line);
-							let mut instruction = dbg!(parse_first_step(other_cursor));
-							match &mut instruction {
-								Instructiune::DacaAtunciAltfel(_, instructions, _)
-								| Instructiune::CatTimpExecuta(_, instructions)
-								| Instructiune::PentruExecuta(_, _, _, _, instructions)
-								| Instructiune::RepetaPanaCand(instructions, _)
-								=> {
-									code = parse(&code[cursor..], instructions, indent+1);
-									cursor = 0;
-									lines = code.split("\n");
-								}
-								Instructiune::Atribuire(..)
-								| Instructiune::Interschimbare(..)
-								| Instructiune::Scrie(..)
-								| Instructiune::Citeste(..)
-								=> {} // do nothing 
-							}
-							instructions.push(instruction);
-							Expecting::Anything
-						}
-					}
-					Expecting::PanaCand(pana_cand_instructions) => {
-						instructions.push(parse_pana_cand(line, pana_cand_instructions));
-						Expecting::Anything
-					}
-				}
-			}
-		}
-	}
-	&code[cursor..]
-}
-
-fn test_execute() {
-	let instructions = vec![
-		Instructiune::Atribuire(Lvalue("a"), FloatRvalue::Literal(10f32)),
-		Instructiune::Atribuire(Lvalue("b"), FloatRvalue::Literal(5f32)),
-		Instructiune::Interschimbare(Lvalue("a"), Lvalue("b")),
-		Instructiune::Scrie(
-			vec![
-				ScrieParam::Rvalue(
-					FloatRvalue::Binary(
-						FloatBinaryOp::Add,
-						Box::new(FloatRvalue::Binary(
-							FloatBinaryOp::Add,
-							Box::new(FloatRvalue::Lvalue(Lvalue("a"))),
-							Box::new(FloatRvalue::Lvalue(Lvalue("b"))),
-						)),
-						Box::new(FloatRvalue::Literal(3f32)),
-					)
-				)
-			]
-		)
-	];
-
-	let mut variables = HashMap::new();
-	execute(&mut variables, &instructions);
+fn parse<'a>(code: &'a str) -> ParsingResult<Vec<Instructiune<'a>>> {
+	let mut program = Vec::new();
+	let cursor = Cursor::new(&code);
+	cursor.parse(&mut program, 0).map(|_| program)
 }
 
 fn main() {
@@ -612,10 +572,17 @@ fn main() {
 	
 	let mut code = String::new();
 	program_file.read_to_string(&mut code).unwrap();
-
-	let mut program = Vec::new();
-	parse(&code, &mut program, 0);
-	dbg!(&program);
-	let mut variables = HashMap::new();
-	execute(&mut variables, &program);
+	
+	let program = parse(code.as_str());
+	match program {
+		Err(ParsingError(line, grapheme, err)) => println!("[{:?}:{:?}] Eroare la parsare: {:?}", line, grapheme, err),
+		Ok(program) => {
+			let mut variables = HashMap::new();
+			let result = execute(&mut variables, &mut BufReader::new(stdin()), &mut stdout(), &program);
+			match result {
+				Err(err) => println!("Eroare la rulare: {:?}", err),
+				Ok(..) => (),
+			}
+		}
+	}
 }

@@ -1,4 +1,5 @@
 mod expression;
+
 use expression::*;
 
 // use std::env;
@@ -34,8 +35,8 @@ enum LineParsingErrorKind {
 	ExpectedScrieParam,
 	ExpectedBoolRvalue,
 	ExpectedFloatRvalue,
+	CatastropheError(CatastropheError),
 	ExpressionParsingError(ExpressionConstructionError),
-	ExpectationError,
 }
 
 #[derive(Debug)]

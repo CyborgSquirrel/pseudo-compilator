@@ -1,3 +1,5 @@
+daca 5 !! 2 atunci
+	scrie "yo"
 daca 5 | 10 atunci
 	scrie "WOW"
 altfel

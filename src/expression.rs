@@ -300,12 +300,18 @@ enum What<'a> {
 	Token(Token<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>),
 }
 
+#[derive(Debug)]
+pub enum CatastropheError {
+	InvalidFloatLiteral,
+	InvalidOperator,
+}
+
 fn global_catastrophe<'a>(
 	expecting: &Expecting,
 	state: &State,
 	current: &'a str,
 	next: Option<&'a str>
-) -> Option<What<'a>> {
+) -> Option<Result<What<'a>, CatastropheError>> {
 	fn bool_bool_binary_op_token<'a>(op: BoolBoolBinaryOp) -> What<'a> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(op)))) }
 	fn bool_float_binary_op_token<'a>(op: BoolFloatBinaryOp) -> What<'a> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(op)))) }
 	fn float_rvalue<'a>(rvalue: FloatRvalue<'a>) -> What<'a> { What::Operand(BoolOrFloatRvalue::FloatRvalue(rvalue)) }
@@ -314,16 +320,21 @@ fn global_catastrophe<'a>(
 	match state {
 		State::ParsingOther(help) => {
 			if next.is_none() {
-				match (help, expecting, current) {
-					(OtherKind::LvalueOrSauOrSi, Expecting::BinaryOperator, "si") =>
-						Some(bool_bool_binary_op_token(BoolBoolBinaryOp::And)),
-					(OtherKind::LvalueOrSauOrSi, Expecting::BinaryOperator, "sau") =>
-						Some(bool_bool_binary_op_token(BoolBoolBinaryOp::Or)),
-					(OtherKind::LvalueOrSauOrSi, _, _) =>
-						Some(float_rvalue(FloatRvalue::Lvalue(Lvalue(current)))),
-					(OtherKind::FloatLiteral, _, _) =>
-						Some(float_rvalue(FloatRvalue::Literal(dbg!(current).parse().unwrap()))),
-				}
+				Some( match help {
+					OtherKind::LvalueOrSauOrSi => Ok( match (expecting, current) {
+						(Expecting::BinaryOperator, "si") =>
+							bool_bool_binary_op_token(BoolBoolBinaryOp::And),
+						(Expecting::BinaryOperator, "sau") =>
+							bool_bool_binary_op_token(BoolBoolBinaryOp::Or),
+						(_, _) =>
+							float_rvalue(FloatRvalue::Lvalue(Lvalue(current))),
+					}),
+					OtherKind::FloatLiteral => {
+						if let Ok(literal) = current.parse() {
+							Ok(float_rvalue(FloatRvalue::Literal(literal)))
+						} else { Err(CatastropheError::InvalidFloatLiteral) }
+					}
+				})
 			} else { None }
 		}
 		State::ParsingReserved => {
@@ -358,20 +369,13 @@ fn global_catastrophe<'a>(
 					_ => None,
 				}
 			};
-			let what = if let Some(next) = next {
-				if parse_reserved(next).is_none() {
+			let next = next.and_then(parse_reserved);
+			if next.is_none() {
+				Some(
 					parse_reserved(current)
-				} else {
-					None
-				}
-			} else {
-				parse_reserved(current)
-			};
-			if let Some(what) = what {
-				Some(what)
-			} else {
-				None
-			}
+						.ok_or(CatastropheError::InvalidOperator)
+				)
+			} else { None }
 		}
 		State::Unsure => None,
 	}
@@ -384,12 +388,12 @@ impl<'a> LineCursor<'a> {
 		let mut graphemes = self.code().grapheme_indices(true);
 		let mut do_the_thing = |cursor: &mut LineCursor<'a>, grapheme, current, graphemes: &mut GraphemeIndices<'a>| {
 			let mut keep_going = true;
-			let trickery = if let Some(grapheme) = grapheme {
+			let grapheme_and_its_kind = if let Some(grapheme) = grapheme {
 				if let Some(grapheme_kind) = get_grapheme_kind(grapheme) {
 					Some((grapheme, grapheme_kind))
 				} else { keep_going = false; None }
 			} else { None };
-			let next = if let Some((grapheme, grapheme_kind)) = &trickery {
+			let next = if let Some((grapheme, grapheme_kind)) = &grapheme_and_its_kind {
 				match (grapheme_kind, &state) {
 					(GraphemeKind::Reserved, State::ParsingReserved) |
 					(GraphemeKind::Other, State::ParsingOther(..))
@@ -398,22 +402,26 @@ impl<'a> LineCursor<'a> {
 						=> None,
 				}
 			} else { None };
-			dbg!(current);
 			let result = global_catastrophe(&expression_constructor.expecting, &state, cursor.code_until(current), next);
 			match result {
 				None => { }
 				Some(what) => {
-					if match what {
-						What::Operand(operand) => expression_constructor.push_operand(operand),
-						What::Token(token) => expression_constructor.push_token(token).unwrap(),
-					} {
-						cursor.advance_by(current);
-						*graphemes = cursor.code().grapheme_indices(true);
-						state = State::Unsure;
-					} else { keep_going = false }
+					match what {
+						Err(err) => return Err(cursor.make_error(LineParsingErrorKind::CatastropheError(err))),
+						Ok(what) => {
+							if match what {
+								What::Operand(operand) => expression_constructor.push_operand(operand),
+								What::Token(token) => expression_constructor.push_token(token).unwrap(),
+							} {
+								cursor.advance_by(current);
+								*graphemes = cursor.code().grapheme_indices(true);
+								state = State::Unsure;
+							} else { keep_going = false }
+						}
+					}
 				}
 			}
-			if let Some((grapheme, grapheme_kind)) = &trickery {
+			if let Some((grapheme, grapheme_kind)) = &grapheme_and_its_kind {
 				if let State::Unsure = &state {
 					state = match grapheme_kind {
 						GraphemeKind::Ignored => {
@@ -433,16 +441,15 @@ impl<'a> LineCursor<'a> {
 					};
 				}
 			}
-			keep_going
+			Ok(keep_going)
 		};
-		dbg!(self.code());
 		while let Some((current, grapheme)) = graphemes.next() {
-			dbg!((current, grapheme));
-			if !dbg!(do_the_thing(&mut self, Some(grapheme), current, &mut graphemes)) { break }
+			(current, grapheme);
+			if !do_the_thing(&mut self, Some(grapheme), current, &mut graphemes)? { break }
 		}
 		if graphemes.next().is_none() {
 			let current = self.code().len();
-			do_the_thing(&mut self, None, current, &mut graphemes);
+			do_the_thing(&mut self, None, current, &mut graphemes)?;
 		}
 		expression_constructor.finish()
 			.map(|rvalue| (self, rvalue))

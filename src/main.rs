@@ -12,8 +12,8 @@ pub enum GraphemeKind { Reserved, Ignored, Other }
 pub fn get_grapheme_kind(grapheme: &str) -> Option<GraphemeKind> {
 	match grapheme {
 		"+"|"-"|"*"|"/"|"%"|
-		"="|"!"|"<"|">"|
-		"("|")"
+		"="|"!"|"<"|">"|"|"|
+		"("|")"|"["|"]"
 			=> Some(GraphemeKind::Reserved),
 		" "
 			=> Some(GraphemeKind::Ignored),
@@ -33,6 +33,7 @@ enum LineParsingErrorKind {
 	ExpectedLvalue,
 	ExpectedScrieParam,
 	ExpectedBoolRvalue,
+	ExpectedFloatRvalue,
 	ExpressionParsingError(ExpressionConstructionError),
 	ExpectationError,
 }
@@ -400,22 +401,12 @@ fn float_evaluate<'a>(
 		FloatRvalue::Lvalue(x) => variables.get(x.0).cloned().ok_or(RuntimeError::UndefinedLvalue(x.0)),
 		FloatRvalue::UnaryOp(op, x) => {
 			let x = float_evaluate(variables, x)?;
-			Ok(match *op {
-				FloatUnaryOp::Ident => x,
-				FloatUnaryOp::Neg => -x,
-				FloatUnaryOp::Whole => x.floor(),
-			})
+			Ok(op.evaluate(x))
 		}
 		FloatRvalue::BinaryOp(op, x, y) => {
 			let x = float_evaluate(variables, x)?;
 			let y = float_evaluate(variables, y)?;
-			Ok(match *op {
-				FloatBinaryOp::Add => x+y,
-				FloatBinaryOp::Sub => x-y,
-				FloatBinaryOp::Mul => x*y,
-				FloatBinaryOp::Div => x/y,
-				FloatBinaryOp::Rem => ((x as i32) % (y as i32)) as f32,
-			})
+			Ok(op.evaluate(x, y))
 		}
 	}
 }
@@ -425,26 +416,15 @@ fn bool_evaluate<'a>(
 	rvalue: &BoolRvalue<'a>,
 ) -> RuntimeResult<'a, bool> {
 	match rvalue {
-		BoolRvalue::BoolBoolBinaryOp(op, lhs, rhs) => {
-			let lhs = bool_evaluate(variables, lhs)?;
-			let rhs = bool_evaluate(variables, rhs)?;
-			Ok(match op {
-				BoolBoolBinaryOp::And => lhs && rhs,
-				BoolBoolBinaryOp::Or => lhs || rhs,
-			})
+		BoolRvalue::BoolBoolBinaryOp(op, x, y) => {
+			let x = bool_evaluate(variables, x)?;
+			let y = bool_evaluate(variables, y)?;
+			Ok(op.evaluate(x, y))
 		}
-		BoolRvalue::BoolFloatBinaryOp(op, lhs, rhs) => {
-			let lhs = float_evaluate(variables, lhs)?;
-			let rhs = float_evaluate(variables, rhs)?;
-			Ok(match op {
-				BoolFloatBinaryOp::Equ => lhs == rhs,
-				BoolFloatBinaryOp::Nequ => lhs != rhs,
-				BoolFloatBinaryOp::Lt => lhs < rhs,
-				BoolFloatBinaryOp::Gt => lhs > rhs,
-				BoolFloatBinaryOp::Lte => lhs <= rhs,
-				BoolFloatBinaryOp::Gte => lhs >= rhs,
-				BoolFloatBinaryOp::Divides => (lhs as i32) % (rhs as i32) == 0,
-			})
+		BoolRvalue::BoolFloatBinaryOp(op, x, y) => {
+			let x = float_evaluate(variables, x)?;
+			let y = float_evaluate(variables, y)?;
+			Ok(op.evaluate(x, y))
 		}
 	}
 }

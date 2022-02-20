@@ -1,5 +1,11 @@
-pentru i <- ,0,-1 executa
-	scrie i
+daca 5 | 10 atunci
+	scrie "WOW"
+altfel
+	scrie "huh?"
+daca 3 | 10 atunci
+	scrie "wut"
+altfel
+	scrie "asdas"
 scrie a
 a<-10
 scrie 1, ' ', 5+3+a, "very nice ", 69, ""

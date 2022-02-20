@@ -14,8 +14,8 @@ pub enum FloatBinaryOp { Add, Sub, Mul, Div, Rem }
 pub enum FloatRvalue<'a> {
 	Literal(f32),
 	Lvalue(Lvalue<'a>),
-	Unary(FloatUnaryOp, Box<FloatRvalue<'a>>),
-	Binary(FloatBinaryOp, Box<FloatRvalue<'a>>, Box<FloatRvalue<'a>>),
+	UnaryOp(FloatUnaryOp, Box<FloatRvalue<'a>>),
+	BinaryOp(FloatBinaryOp, Box<FloatRvalue<'a>>, Box<FloatRvalue<'a>>),
 }
 
 #[derive(Debug)]
@@ -60,14 +60,19 @@ fn float_get_priority(token: &Token<FloatUnaryOp, FloatBinaryOp>) -> u32 {
 		}
 	}
 }
-fn float_eval<'a>(token: Token<FloatUnaryOp, FloatBinaryOp>, lhs: FloatRvalue<'a>, rhs: FloatRvalue<'a>) -> FloatRvalue<'a> {
+fn float_eval<'a>(token: Token<FloatUnaryOp, FloatBinaryOp>, stack: &mut Vec<FloatRvalue<'a>>) -> Option<FloatRvalue<'a>> {
 	match token {
 		Token::Lparen => panic!(),
 		Token::Rparen => panic!(),
 		Token::BinaryOp(op) => {
-			FloatRvalue::Binary(op, Box::new(lhs), Box::new(rhs))
+			let y = stack.pop()?;
+			let x = stack.pop()?;
+			Some(FloatRvalue::BinaryOp(op, Box::new(x), Box::new(y)))
 		}
-		Token::UnaryOp(..) => todo!()
+		Token::UnaryOp(op) => {
+			let x = stack.pop()?;
+			Some(FloatRvalue::UnaryOp(op, Box::new(x)))
+		}
 	}
 }
 
@@ -80,17 +85,13 @@ struct ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn> 
 	eval: EvalFn,
 }
 
-#[derive(Debug)]
-enum Expecting {
-	Operand, Operator
+#[derive(Debug, Clone, Copy)]
+pub enum Expecting {
+	Operand, OperandOrUnaryOperator, BinaryOperator
 }
 
 #[derive(Debug)]
-enum ExpressionConstructionError {
-	TooManyOperands,
-	TooFewOperands,
-	TooFewOperators,
-}
+pub struct ExpressionConstructionError(pub Expecting);
 
 type ExpressionConstructorResult<T> = Result<T, ExpressionConstructionError>;
 
@@ -98,7 +99,7 @@ impl<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
 ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
 where
 	GetPriorityFn: Fn(&Token<UnaryOp, BinaryOp>) -> u32,
-	EvalFn: Fn(Token<UnaryOp, BinaryOp>, Operand, Operand) -> Operand,
+	EvalFn: Fn(Token<UnaryOp, BinaryOp>, &mut Vec<Operand>) -> Option<Operand>,
 	Operand: std::fmt::Debug,
 	UnaryOp: std::fmt::Debug,
 	BinaryOp: std::fmt::Debug,
@@ -107,18 +108,20 @@ where
 		Self {
 			tokens: Vec::new(),
 			operands: Vec::new(),
-			expecting: Expecting::Operand,
+			expecting: Expecting::OperandOrUnaryOperator,
 			get_priority,
 			eval,
 		}
 	}
-	fn eval_binary_op(&mut self) -> ExpressionConstructorResult<()> {
+	fn make_error(&self) -> ExpressionConstructionError {
+		ExpressionConstructionError(self.expecting)
+	}
+	fn eval_top_op(&mut self) -> ExpressionConstructorResult<()> {
 		dbg!(&self.tokens);
 		dbg!(&self.operands);
-		let rhs = self.operands.pop().ok_or(ExpressionConstructionError::TooFewOperands)?;
-		let lhs = self.operands.pop().ok_or(ExpressionConstructionError::TooFewOperands)?;
-		let last = self.tokens.pop().ok_or(ExpressionConstructionError::TooFewOperators)?;
-		self.operands.push((self.eval)(last, lhs, rhs));
+		let last = self.tokens.pop().ok_or(self.make_error())?;
+		let operand = (self.eval)(last, &mut self.operands).ok_or(self.make_error())?;
+		self.operands.push(operand);
 		Ok(())
 	}
 	fn push_token(&mut self, token: Token<UnaryOp, BinaryOp>) -> ExpressionConstructorResult<bool> {
@@ -127,7 +130,7 @@ where
 			Token::Rparen => {
 				while let Some(last) = self.tokens.last() {
 					if !matches!(last, Token::Lparen) {
-						self.eval_binary_op()?;
+						self.eval_top_op()?;
 					} else {
 						self.tokens.pop();
 						break;
@@ -135,19 +138,19 @@ where
 				}
 			}
 			Token::BinaryOp(..) => {
-				if !matches!(self.expecting, Expecting::Operator) { return Ok(false) }
-				self.expecting = Expecting::Operand;
+				if !matches!(self.expecting, Expecting::BinaryOperator) { return Ok(false) }
+				self.expecting = Expecting::OperandOrUnaryOperator;
 				while let Some(last) = self.tokens.last() {
 					if (self.get_priority)(&token) <= (self.get_priority)(last) {
-						self.eval_binary_op()?;
+						self.eval_top_op()?;
 					} else {
 						break;
 					}
 				}
 			}
 			Token::UnaryOp(..) => {
-				// assert!(matches!(self.expecting, Expecting::Operator));
-				todo!();
+				if !matches!(self.expecting, Expecting::OperandOrUnaryOperator) { return Ok(false) }
+				self.expecting = Expecting::Operand;
 			}
 		}
 		if !matches!(token, Token::Rparen) {
@@ -156,18 +159,18 @@ where
 		Ok(true)
 	}
 	fn push_operand(&mut self, operand: Operand) -> bool {
-		if !matches!(self.expecting, Expecting::Operand) { return false }
-		self.expecting = Expecting::Operator;
+		if !matches!(self.expecting, Expecting::Operand|Expecting::OperandOrUnaryOperator) { return false }
+		self.expecting = Expecting::BinaryOperator;
 		self.operands.push(operand);
 		true
 	}
 	fn finish(mut self) -> ExpressionConstructorResult<Operand> {
 		while !self.tokens.is_empty() {
-			self.eval_binary_op()?;
+			self.eval_top_op()?;
 		}
 		match self.operands.len().cmp(&1) {
-			std::cmp::Ordering::Less => Err(ExpressionConstructionError::TooFewOperands),
-			std::cmp::Ordering::Greater => Err(ExpressionConstructionError::TooManyOperands),
+			std::cmp::Ordering::Less => Err(self.make_error()),
+			std::cmp::Ordering::Greater => Err(self.make_error()),
 			std::cmp::Ordering::Equal => Ok(self.operands.pop().unwrap()),
 		}
 	}
@@ -179,11 +182,17 @@ enum BoolOrFloatBinaryOp {
 	FloatBinaryOp(FloatBinaryOp),
 }
 
-fn bool_get_priority(token: &Token<BoolUnaryOp, BoolOrFloatBinaryOp>) -> u32 {
+#[derive(Debug)]
+enum BoolOrFloatUnaryOp {
+	BoolUnaryOp(BoolUnaryOp),
+	FloatUnaryOp(FloatUnaryOp),
+}
+
+fn bool_get_priority(token: &Token<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>) -> u32 {
 	match token {
 		Token::Lparen => 0,
 		Token::Rparen => panic!(),
-		Token::UnaryOp(op) => todo!(),
+		Token::UnaryOp(..) => 0,
 		Token::BinaryOp(op) => match op {
 			BoolOrFloatBinaryOp::BoolBinaryOp(op) => match op {
 				BoolBinaryOp::BoolBoolBinaryOp(op) => match op {
@@ -216,34 +225,44 @@ enum BoolOrFloatRvalue<'a> {
 	FloatRvalue(FloatRvalue<'a>),
 }
 
-fn bool_eval<'a>(token: Token<BoolUnaryOp, BoolOrFloatBinaryOp>, lhs: BoolOrFloatRvalue<'a>, rhs: BoolOrFloatRvalue<'a>) -> BoolOrFloatRvalue<'a> {
+fn bool_eval<'a>(token: Token<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>, stack: &mut Vec<BoolOrFloatRvalue<'a>>) -> Option<BoolOrFloatRvalue<'a>> {
 	match token {
 		Token::Lparen => panic!(),
 		Token::Rparen => panic!(),
 		Token::BinaryOp(op) => {
+			let x = stack.pop()?;
+			let y = stack.pop()?;
 			match op {
 				BoolOrFloatBinaryOp::BoolBinaryOp(op) => {
 					match op {
 						BoolBinaryOp::BoolBoolBinaryOp(op) => {
-							if let (BoolOrFloatRvalue::BoolRvalue(lhs), BoolOrFloatRvalue::BoolRvalue(rhs)) = (lhs, rhs) {
-								BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolBoolBinaryOp(op, Box::new(lhs), Box::new(rhs)))
-							} else { panic!() }
+							if let (BoolOrFloatRvalue::BoolRvalue(y), BoolOrFloatRvalue::BoolRvalue(x)) = (y, x) {
+								Some(BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolBoolBinaryOp(op, Box::new(y), Box::new(x))))
+							} else { None }
 						}
 						BoolBinaryOp::BoolFloatBinaryOp(op) => {
-							if let (BoolOrFloatRvalue::FloatRvalue(lhs), BoolOrFloatRvalue::FloatRvalue(rhs)) = (lhs, rhs) {
-								BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolFloatBinaryOp(op, lhs, rhs))
-							} else { panic!() }
+							if let (BoolOrFloatRvalue::FloatRvalue(y), BoolOrFloatRvalue::FloatRvalue(x)) = (y, x) {
+								Some(BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolFloatBinaryOp(op, y, x)))
+							} else { None }
 						}
 					}
 				}
 				BoolOrFloatBinaryOp::FloatBinaryOp(op) => {
-					if let (BoolOrFloatRvalue::FloatRvalue(lhs), BoolOrFloatRvalue::FloatRvalue(rhs)) = (lhs, rhs) {
-						BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Binary(op, Box::new(lhs), Box::new(rhs)))
-					} else { panic!() }
+					if let (BoolOrFloatRvalue::FloatRvalue(y), BoolOrFloatRvalue::FloatRvalue(x)) = (y, x) {
+						Some(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::BinaryOp(op, Box::new(y), Box::new(x))))
+					} else { None }
 				}
 			}
 		}
-		Token::UnaryOp(..) => todo!()
+		Token::UnaryOp(op) => {
+			let x = stack.pop()?;
+			match (op, x) {
+				(BoolOrFloatUnaryOp::FloatUnaryOp(op), BoolOrFloatRvalue::FloatRvalue(x)) =>
+					Some(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::UnaryOp(op, Box::new(x)))),
+				_ =>
+					None,
+			}
+		}
 	}
 }
 
@@ -280,7 +299,7 @@ fn parsinate<'a, F, GetPriorityFn, EvalFn, Operand, UnaryOp, BinaryOp>(
 where
 	F: FnMut(&Expecting, &State, &'a str, Option<&'a str>) -> Catastrophe<Operand, UnaryOp, BinaryOp>,
 	GetPriorityFn: Fn(&Token<UnaryOp, BinaryOp>) -> u32,
-	EvalFn: Fn(Token<UnaryOp, BinaryOp>, Operand, Operand) -> Operand,
+	EvalFn: Fn(Token<UnaryOp, BinaryOp>, &mut Vec<Operand>) -> Option<Operand>,
 	Operand: std::fmt::Debug,
 	UnaryOp: std::fmt::Debug,
 	BinaryOp: std::fmt::Debug,
@@ -318,7 +337,6 @@ where
 				} else { keep_going = false }
 			}
 		}
-		dbg!(&trickery);
 		if let Some((grapheme, grapheme_kind)) = &trickery {
 			if let State::Unsure = &state {
 				state = match grapheme_kind {
@@ -352,13 +370,13 @@ where
 	}
 	expression_constructor.finish()
 		.map(|rvalue| (cursor, rvalue))
-		.map_err(|_| cursor.make_error(LineParsingErrorKind::ExpectationError))
+		.map_err(|err| cursor.make_error(LineParsingErrorKind::ExpressionParsingError(err)))
 }
 
-fn global_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> {
-	fn bool_bool_binary_op_token<'a>(op: BoolBoolBinaryOp) -> What<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(op)))) }
-	fn bool_float_binary_op_token<'a>(op: BoolFloatBinaryOp) -> What<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(op)))) }
-	fn pass_to_float_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp> {
+fn global_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<BoolOrFloatRvalue<'a>, BoolOrFloatUnaryOp, BoolOrFloatBinaryOp> {
+	fn bool_bool_binary_op_token<'a>(op: BoolBoolBinaryOp) -> What<BoolOrFloatRvalue<'a>, BoolOrFloatUnaryOp, BoolOrFloatBinaryOp> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(op)))) }
+	fn bool_float_binary_op_token<'a>(op: BoolFloatBinaryOp) -> What<BoolOrFloatRvalue<'a>, BoolOrFloatUnaryOp, BoolOrFloatBinaryOp> { What::Token(Token::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(op)))) }
+	fn pass_to_float_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<BoolOrFloatRvalue<'a>, BoolOrFloatUnaryOp, BoolOrFloatBinaryOp> {
 		match float_catastrophe(expecting, state, current, next) {
 			Catastrophe::Skipped => Catastrophe::Skipped,
 			Catastrophe::Parsed(what) => Catastrophe::Parsed({
@@ -377,16 +395,16 @@ fn global_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str
 	match state {
 		State::ParsingOther(help) => {
 			match (next, help, expecting, current) {
-				(None, HelpIsNeeded::LvalueOrSauOrSi, Expecting::Operator, "si") =>
+				(None, HelpIsNeeded::LvalueOrSauOrSi, Expecting::BinaryOperator, "si") =>
 					Catastrophe::Parsed(bool_bool_binary_op_token(BoolBoolBinaryOp::And)),
-				(None, HelpIsNeeded::LvalueOrSauOrSi, Expecting::Operator, "sau") =>
+				(None, HelpIsNeeded::LvalueOrSauOrSi, Expecting::BinaryOperator, "sau") =>
 					Catastrophe::Parsed(bool_bool_binary_op_token(BoolBoolBinaryOp::Or)),
 				_ =>
 					pass_to_float_catastrophe(expecting, state, current, next),
 			}
 		}
 		State::ParsingReserved => {
-			let parse_reserved = |name: &'a str| -> Option<What<BoolOrFloatRvalue<'a>, BoolUnaryOp, BoolOrFloatBinaryOp>> {
+			let parse_reserved = |name: &'a str| -> Option<What<BoolOrFloatRvalue<'a>, BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>> {
 				match name {
 					"=" => Some(bool_float_binary_op_token(BoolFloatBinaryOp::Equ)),
 					"!=" => Some(bool_float_binary_op_token(BoolFloatBinaryOp::Nequ)),
@@ -422,6 +440,7 @@ fn global_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str
 
 fn float_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str, next: Option<&'a str>) -> Catastrophe<FloatRvalue<'a>, FloatUnaryOp, FloatBinaryOp> {
 	fn float_binary_op_token<'a>(op: FloatBinaryOp) -> What<FloatRvalue<'a>, FloatUnaryOp, FloatBinaryOp> { What::Token(Token::BinaryOp(op)) }
+	fn float_unary_op_token<'a>(op: FloatUnaryOp) -> What<FloatRvalue<'a>, FloatUnaryOp, FloatBinaryOp> { What::Token(Token::UnaryOp(op)) }
 	match state {
 		State::ParsingOther(help) => {
 			if next.is_none() {
@@ -434,20 +453,28 @@ fn float_catastrophe<'a>(expecting: &Expecting, state: &State, current: &'a str,
 			} else { Catastrophe::Skipped }
 		}
 		State::ParsingReserved => {
-			fn parse_reserved<'a>(name: &'a str) -> Option<What<FloatRvalue<'a>, FloatUnaryOp, FloatBinaryOp>> {
+			let parse_reserved = |name: &'a str| -> Option<What<FloatRvalue<'a>, FloatUnaryOp, FloatBinaryOp>> {
 				match name {
 					"(" => Some(What::Token(Token::Lparen)),
 					")" => Some(What::Token(Token::Rparen)),
 					
-					"+" => Some(float_binary_op_token(FloatBinaryOp::Add)),
-					"-" => Some(float_binary_op_token(FloatBinaryOp::Sub)),
+					"+" => match expecting {
+						Expecting::BinaryOperator => Some(float_binary_op_token(FloatBinaryOp::Add)),
+						Expecting::OperandOrUnaryOperator => Some(float_unary_op_token(FloatUnaryOp::Ident)),
+						_ => None,
+					}
+					"-" => match expecting {
+						Expecting::BinaryOperator => Some(float_binary_op_token(FloatBinaryOp::Sub)),
+						Expecting::OperandOrUnaryOperator => Some(float_unary_op_token(FloatUnaryOp::Neg)),
+						_ => None,
+					}
 					"*" => Some(float_binary_op_token(FloatBinaryOp::Mul)),
 					"/" => Some(float_binary_op_token(FloatBinaryOp::Div)),
 					"%" => Some(float_binary_op_token(FloatBinaryOp::Rem)),
 					
 					_ => None,
 				}
-			}
+			};
 			let token = if let Some(next) = next {
 				if parse_reserved(next).is_none() {
 					parse_reserved(current)

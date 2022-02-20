@@ -33,7 +33,7 @@ enum LineParsingErrorKind {
 	ExpectedLvalue,
 	ExpectedScrieParam,
 	ExpectedBoolRvalue,
-	ExpectedFloatRvalue,
+	ExpressionParsingError(ExpressionConstructionError),
 	ExpectationError,
 }
 
@@ -398,7 +398,7 @@ fn float_evaluate<'a>(
 	match rvalue {
 		FloatRvalue::Literal(x) => Ok(*x),
 		FloatRvalue::Lvalue(x) => variables.get(x.0).cloned().ok_or(RuntimeError::UndefinedLvalue(x.0)),
-		FloatRvalue::Unary(op, x) => {
+		FloatRvalue::UnaryOp(op, x) => {
 			let x = float_evaluate(variables, x)?;
 			Ok(match *op {
 				FloatUnaryOp::Ident => x,
@@ -406,7 +406,7 @@ fn float_evaluate<'a>(
 				FloatUnaryOp::Whole => x.floor(),
 			})
 		}
-		FloatRvalue::Binary(op, x, y) => {
+		FloatRvalue::BinaryOp(op, x, y) => {
 			let x = float_evaluate(variables, x)?;
 			let y = float_evaluate(variables, y)?;
 			Ok(match *op {

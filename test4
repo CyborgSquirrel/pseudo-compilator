@@ -1,0 +1,20 @@
+citeste x
+cat timp x>0 executa
+	citeste y
+	daca x>y atunci
+		scrie x%10
+	altfel
+		scrie y%10
+	x <- y
+
+citeste n
+z<-0
+p<-1
+cat timp n>0 executa
+	c<-n%10
+	n<-[n/10]
+	daca c%3=0 atunci
+		z<-z+p*(9-c)
+		p<-p*10
+scrie z
+

@@ -1,42 +1,17 @@
-daca 5 !! 2 atunci
-	scrie "yo"
-daca 5 | 10 atunci
-	scrie "WOW"
-altfel
-	scrie "huh?"
-daca 3 | 10 atunci
-	scrie "wut"
-altfel
-	scrie "asdas"
-scrie a
-a<-10
-scrie 1, ' ', 5+3+a, "very nice ", 69, ""
-daca a+5=10 sau a=10 atunci
-	scrie "DE CE ESTE a=", a, " DOMINE???"
-daca a=9 atunci
-	scrie 100
-altfel
-	scrie 69
-repeta
-	a <- a+1
-pana cand a=15
-scrie a
-b<-5
-c <-  (a+2)*b+3
-scrie a%5
-a <- a-1
-scrie a
-a<->b
-a  <-> b
-cat timp a > 0 executa
-	a <- a-1
-	scrie a
-scrie 123
-pentru i<-1,5,2 executa
-	scrie i
-daca a < b atunci
-	scrie 1
-	daca b = 10 atunci
-		scrie 2
-daca a+b = 15 atunci
-	scrie 3
+daca a<b atunci
+	scrie "nice"
+
+scrie (a+1
+scrie a+1)
+
+
+citeste n
+z <- 0
+p <- 1
+cat timp n>0 executa
+	c <- n%10
+	n <- [n/10]
+	daca c%3=0 atunci
+		z <- z+p*(9-c)
+		p <- p*10
+scrie z

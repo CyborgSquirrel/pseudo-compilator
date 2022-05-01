@@ -1,5 +1,3 @@
-use std::fmt::LowerExp;
-
 use trace::trace;
 trace::init_depth_var!();
 
@@ -233,8 +231,6 @@ where
 	}
 	fn finish(mut self) -> ExpressionConstructorResult<Operand, UnaryOp, BinaryOp> {
 		while !self.operators.is_empty() {
-			dbg!(&self.operators);
-			dbg!(&self.operands);
 			self.eval_top_op()?;
 		}
 		match self.operands.len().cmp(&1) {
@@ -299,7 +295,7 @@ fn try_parse_token<'a>(
 			if next.is_none() {
 				Some( match other_kind {
 					OtherKind::LvalueOrSauOrSi => Ok( match (expecting, current) {
-						(Expecting::BinaryOperator, "si") =>
+						(Expecting::BinaryOperator, "si"|"și") =>
 							bool_bool_binary_op_operand(BoolBoolBinaryOp::And),
 						(Expecting::BinaryOperator, "sau") =>
 							bool_bool_binary_op_operand(BoolBoolBinaryOp::Or),
@@ -315,43 +311,52 @@ fn try_parse_token<'a>(
 			} else { None }
 		}
 		State::ParsingReserved => {
-			let parse_reserved = |name: &'a str| -> Option<Token<'a>> {
+			let parse_reserved = |name: &'a str| -> Option<Option<Token<'a>>> {
 				match name {
-					"(" => Some(float_paren_op_operand(FloatUnaryOp::Ident, ParenKind::Lparen)),
-					")" => Some(float_paren_op_operand(FloatUnaryOp::Ident, ParenKind::Rparen)),
+					""   => Some(None),
 					
-					"[" => Some(float_paren_op_operand(FloatUnaryOp::Whole, ParenKind::Lparen)),
-					"]" => Some(float_paren_op_operand(FloatUnaryOp::Whole, ParenKind::Rparen)),
+					"("  => Some(Some(float_paren_op_operand(FloatUnaryOp::Ident, ParenKind::Lparen))),
+					")"  => Some(Some(float_paren_op_operand(FloatUnaryOp::Ident, ParenKind::Rparen))),
 					
-					"="  => Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Equ)),
-					"!=" => Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Nequ)),
-					"<"  => Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Lt)),
-					"<=" => Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Lte)),
-					">"  => Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Gt)),
-					">=" => Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Gte)),
-					"|"  => Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Divides)),
+					"["  => Some(Some(float_paren_op_operand(FloatUnaryOp::Whole, ParenKind::Lparen))),
+					"]"  => Some(Some(float_paren_op_operand(FloatUnaryOp::Whole, ParenKind::Rparen))),
+					
+					"="  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Equ))),
+					"!"  => Some(None),
+					"!=" => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Nequ))),
+					"<"  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Lt))),
+					"<=" => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Lte))),
+					">"  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Gt))),
+					">=" => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Gte))),
+					"|"  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Divides))),
 					
 					"+" => match expecting {
-						Expecting::BinaryOperator => Some(float_binary_op_operand(FloatBinaryOp::Add)),
-						Expecting::OperandOrUnaryOperator => Some(float_unary_op_operand(FloatUnaryOp::Ident)),
+						Expecting::BinaryOperator => Some(Some(float_binary_op_operand(FloatBinaryOp::Add))),
+						Expecting::OperandOrUnaryOperator => Some(Some(float_unary_op_operand(FloatUnaryOp::Ident))),
 						_ => None,
 					}
 					"-" => match expecting {
-						Expecting::BinaryOperator => Some(float_binary_op_operand(FloatBinaryOp::Sub)),
-						Expecting::OperandOrUnaryOperator => Some(float_unary_op_operand(FloatUnaryOp::Neg)),
+						Expecting::BinaryOperator => Some(Some(float_binary_op_operand(FloatBinaryOp::Sub))),
+						Expecting::OperandOrUnaryOperator => Some(Some(float_unary_op_operand(FloatUnaryOp::Neg))),
 						_ => None,
 					}
 					
-					"*" => Some(float_binary_op_operand(FloatBinaryOp::Mul)),
-					"/" => Some(float_binary_op_operand(FloatBinaryOp::Div)),
-					"%" => Some(float_binary_op_operand(FloatBinaryOp::Rem)),
+					"*" => Some(Some(float_binary_op_operand(FloatBinaryOp::Mul))),
+					"/" => Some(Some(float_binary_op_operand(FloatBinaryOp::Div))),
+					"%" => Some(Some(float_binary_op_operand(FloatBinaryOp::Rem))),
 					
 					_ => None,
 				}
 			};
-			let next = next.and_then(parse_reserved);
-			if next.is_none() {
-				Some(parse_reserved(current).ok_or(TokenParsingError::InvalidOperator(String::from(current))))
+			let must_push =
+				if let Some(next) = next { parse_reserved(next).is_none() }
+				else { matches!(expecting, Expecting::BinaryOperator|Expecting::OperandOrUnaryOperator) };
+			if must_push {
+				Some(
+					parse_reserved(current)
+						.flatten()
+						.ok_or(TokenParsingError::InvalidOperator(String::from(current)))
+				)
 			} else { None }
 		}
 		State::Unsure => None,

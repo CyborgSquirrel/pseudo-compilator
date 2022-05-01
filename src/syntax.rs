@@ -1,3 +1,5 @@
+use crate::runtime::EPSILON;
+
 #[derive(Debug)]
 pub enum Instructiune<'a> {
 	Atribuire(Lvalue<'a>, FloatRvalue<'a>),
@@ -89,8 +91,8 @@ pub enum BoolFloatBinaryOp {
 impl BoolFloatBinaryOp {
 	pub fn evaluate(&self, x: f32, y: f32) -> bool {
 		match self {
-			BoolFloatBinaryOp::Equ     => x == y,
-			BoolFloatBinaryOp::Nequ    => x != y,
+			BoolFloatBinaryOp::Equ     => (x - y).abs() <= EPSILON,
+			BoolFloatBinaryOp::Nequ    => (x - y).abs() > EPSILON,
 			BoolFloatBinaryOp::Lt      => x < y,
 			BoolFloatBinaryOp::Gt      => x > y,
 			BoolFloatBinaryOp::Lte     => x <= y,

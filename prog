@@ -1,17 +1,19 @@
-daca a<b atunci
-	scrie "nice"
+citește x,z
+scrie x,z
+y<-0
+repetă
+	y<-y*10+x%10
+	x<-[x/100]
+până când x=0
+cât timp y*z>0 și y%10=z%10 execută
+	y<-[y%10]
+	z<-[z%10]
+dacă y+z=0 atunci
+	scrie 1
+altfel
+	scrie 0
 
-scrie (a+1
-scrie a+1)
-
-
-citeste n
-z <- 0
-p <- 1
-cat timp n>0 executa
-	c <- n%10
-	n <- [n/10]
-	daca c%3=0 atunci
-		z <- z+p*(9-c)
-		p <- p*10
-scrie z
+citeste a
+scrie a
+citeste b
+scrie b

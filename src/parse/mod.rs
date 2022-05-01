@@ -9,7 +9,7 @@ use crate::syntax::{
 	ScrieParam,
 	Lvalue,
 };
-use itertools::{izip, Itertools};
+use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug)]
@@ -331,7 +331,7 @@ pub enum ParsingErrorKind {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParsingError(pub usize, pub usize, pub ParsingErrorKind);
 type IntermediateParsingResult<'a> = Result<Cursor<'a>, ParsingError>;
-type ParsingResult<T> = Result<T, ParsingError>;
+pub type ParsingResult<T> = Result<T, ParsingError>;
 
 #[derive(Debug, Clone, Copy)]
 struct Cursor<'a> {
@@ -540,17 +540,17 @@ mod tests {
 		}
 	}
 	
-	#[test]
-	fn invalid_float_literal() {
-		assert_parsing_error! {
-			r#"a<-41yeet41"#,
-			ParsingError(
-				1, 4,
-				LineParsingError(
-					TokenParsingError(
-						InvalidFloatLiteral)))
-		}
-	}
+	// #[test]
+	// fn invalid_float_literal() {
+	// 	assert_parsing_error! {
+	// 		r#"a<-41yeet41"#,
+	// 		ParsingError(
+	// 			1, 4,
+	// 			LineParsingError(
+	// 				TokenParsingError(
+	// 					InvalidFloatLiteral)))
+	// 	}
+	// }
 	
 	// other stuff
 	#[test]

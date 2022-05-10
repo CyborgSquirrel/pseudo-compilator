@@ -1,0 +1,17 @@
+citește x,z
+y<-0
+repeta
+	daca x atunci
+		scrie "da"
+
+repetă
+	y<-y*10+x%10
+	x<-[x/100]
+până când x=0
+cât timp y*z>0 și y%10=z%10 execută
+	y<-[y/10]
+	z<-[z/10]
+dacă y+z=0 atunci
+	scrie 1
+altfel
+	scrie 0

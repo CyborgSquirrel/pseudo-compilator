@@ -257,7 +257,6 @@ impl<'a> LineCursor<'a> {
 		Ok(Instructiune::CatTimpExecuta(rvalue, Vec::new()))
 	}
 	
-	#[trace]
 	fn parse_pana_cand(self, instructions: Vec<Instructiune<'a>>) -> LineParsingResult<Instructiune<'a>> {
 		let (new_self, _) = self.expect_str_optional_diacritics("până când ")?;
 		let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
@@ -312,6 +311,43 @@ impl<'a> LineCursor<'a> {
 				Ok(vec![new_self.parse_second_step_cat_timp()?]),
 			"pentru" =>
 				Ok(vec![new_self.parse_second_step_pentru()?]),
+			_ =>
+				new_self.parse_nonrecursive_instructions(name),
+		}
+	}
+	
+	fn parse_stuff(self) -> LineParsingResult<Vec<Instructiune<'a>>> {
+		let mut done = false;
+		let mut instructions = Vec::new();
+		while !done {
+			let (new_self, instruction) = match name {
+				"daca"|"dacă" =>
+					Ok(vec![new_self.parse_second_step_daca()?]),
+				"cat"|"cât" =>
+					Ok(vec![new_self.parse_second_step_cat_timp()?]),
+				"pentru" =>
+					Ok(vec![new_self.parse_second_step_pentru()?]),
+				"scrie" =>
+					self.parse_second_step_scrie(),
+				"citeste"|"citește" =>
+					self.parse_second_step_citeste(),
+				x =>
+					self.parse_second_step_lvalue(Lvalue(x)),
+			}?;
+			instructions.push(instruction);
+			self = new_self.skip_spaces();
+			if let Ok((new_self, _)) = self.expect_grapheme(";") {
+				self = new_self.skip_spaces();
+				let (new_self, new_name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+				self = new_self;
+				name = new_name;
+			} else { done = true }
+		}
+		self.skip_spaces().expect_end()?;
+		Ok(instructions)
+		
+		let (new_self, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+		match name {
 			_ =>
 				new_self.parse_nonrecursive_instructions(name),
 		}
@@ -473,9 +509,20 @@ pub fn parse<'a>(code: &'a str) -> ParsingResult<Vec<Instructiune<'a>>> {
 
 #[cfg(test)]
 mod tests {
+	use indoc::indoc;
+	
 	macro_rules! assert_parsing_error {
-		{ $code:expr, $err:expr } => {
-			assert_eq!(parse($code).unwrap_err(), $err);
+		( $code:expr, $err:expr ) => {
+			assert_eq!(parse(indoc! { $code }).unwrap_err(), $err);
+		}
+	}
+	
+	macro_rules! test_parsing_error {
+		{ $function:ident, $err:expr, $code:expr } => {
+			#[test]
+			fn $function() {
+				assert_parsing_error!($code, $err);
+			}
 		}
 	}
 	
@@ -489,55 +536,47 @@ mod tests {
 	};
 	
 	// expressions
-	#[test]
-	fn missing_operand_or_unary_operator() {
-		assert_parsing_error! {
-			r#"scrie   4141+  "#,
-			ParsingError(
-				1, 16,
-				LineParsingError(
-					ExpressionConstructionError(
-						ExpectationError(
-							OperandOrUnaryOperator))))
-		}
+	test_parsing_error! {
+		missing_operand_or_unary_operator,
+		ParsingError(
+			1, 16,
+			LineParsingError(
+				ExpressionConstructionError(
+					ExpectationError(
+						OperandOrUnaryOperator)))),
+		r#"scrie   4141+  "#
 	}
 	
-	#[test]
-	fn missing_operand() {
-		assert_parsing_error! {
-			r#"scrie   4141+-  "#,
-			ParsingError(
-				1, 17,
-				LineParsingError(
-					ExpressionConstructionError(
-						ExpectationError(
-							Operand))))
-		}
+	test_parsing_error! {
+		missing_operand,
+		ParsingError(
+			1, 17,
+			LineParsingError(
+				ExpressionConstructionError(
+					ExpectationError(
+						Operand)))),
+		r#"scrie   4141+-  "#
 	}
 	
-	#[test]
-	fn mismatched_parens() {
-		assert_parsing_error! {
-			r#"scrie [1+2)"#,
-			ParsingError(
-				1, 11,
-				LineParsingError(
-					ExpressionConstructionError(
-						MismatchedParens)))
-		}
+	test_parsing_error! {
+		mismatched_parens,
+		ParsingError(
+			1, 11,
+			LineParsingError(
+				ExpressionConstructionError(
+					MismatchedParens))),
+		r#"scrie [1+2)"#
 	}
 	
-	#[test]
-	fn too_many_unary_operators() {
-		assert_parsing_error! {
-			r#"scrie ++41+1"#,
-			ParsingError(
-				1, 8,
-				LineParsingError(
-					ExpressionConstructionError(
-						ExpectationError(
-							Operand))))
-		}
+	test_parsing_error! {
+		too_many_unary_operators,
+		ParsingError(
+			1, 8,
+			LineParsingError(
+				ExpressionConstructionError(
+					ExpectationError(
+						Operand)))),
+		r#"scrie ++41+1"#
 	}
 	
 	// #[test]
@@ -553,98 +592,106 @@ mod tests {
 	// }
 	
 	// other stuff
-	#[test]
-	fn invalid_indent() {
-		assert_parsing_error! {
-r#"scrie "ok"
-	scrie "nope""#
-	,
-			ParsingError(
-				2, 0,
-				InvalidIndent)
-		}
+	test_parsing_error! {
+		invalid_indent,
+		ParsingError(
+			2, 0,
+			InvalidIndent),
+		r#"
+			scrie "ok"
+				scrie "nope"
+		"#
 	}
 	
-	#[test]
-	fn altfel_without_daca() {
-		assert_parsing_error! {
-r#"scrie 41
-
-altfel"#,
-			ParsingError(
-				3, 0,
-				AltfelWithoutDaca)
-		}
+	test_parsing_error! {
+		altfel_without_daca,
+		ParsingError(
+			3, 0,
+			AltfelWithoutDaca),
+		r#"
+			scrie 41
+			
+			altfel
+		"#
 	}
 	
-	#[test]
-	fn daca_already_has_altfel() {
-		assert_parsing_error! {
-r#"scrie 41
-
-daca 41=41 atunci
-	scrie "ok"
-altfel
-	scrie "catastrofa"
-altfel
-	scrie "wut""#,
-			ParsingError(
-				7, 0,
-				DacaAlreadyHasAltfel)
-		}
+	test_parsing_error! {
+		daca_already_has_altfel,
+		ParsingError(
+			7, 0,
+			DacaAlreadyHasAltfel),
+		r#"
+			scrie 41
+			
+			daca 41=41 atunci
+				scrie "ok"
+			altfel
+				scrie "catastrofa"
+			altfel
+				scrie "wut"
+		"#
 	}
 	
-	#[test]
-	fn empty_block_daca() {
-		assert_parsing_error! {
-r#"daca 40+1=41 atunci
-	
-scrie "bun""#,
-			ParsingError(
-				2, 0,
-				EmptyBlock)
-		}
+	test_parsing_error! {
+		empty_block_daca,
+		ParsingError(
+			2, 0,
+			EmptyBlock),
+		r#"
+			daca 40+1=41 atunci
+				
+			scrie "bun"
+		"#
 	}
 	
-	#[test]
-	fn empty_block_altfel() {
-		assert_parsing_error! {
-r#"daca 40+1=41 atunci
-	scrie "bun"
-altfel
-scrie "ne-bun""#,
-			ParsingError(
-				3, 0,
-				EmptyBlock)
-		}
+	test_parsing_error! {
+		empty_block_altfel,
+		ParsingError(
+			3, 0,
+			EmptyBlock),
+		r#"
+			daca 40+1=41 atunci
+				scrie "bun"
+			altfel
+			scrie "ne-bun"
+		"#
 	}
 	
-	#[test]
-	fn empty_block_repeta_pana_cand() {
-		assert_parsing_error! {
-r#"repeta
-	
-	
-	
-	
-	
-pana cand 41=42-1"#,
-			ParsingError(
-				7, 0,
-				EmptyBlock)
-		}
+	test_parsing_error! {
+		empty_block_repeta_pana_cand,
+		ParsingError(
+			7, 0,
+			EmptyBlock),
+		r#"
+			repeta
+				
+				
+				
+				
+				
+			pana cand 41=42-1
+		"#
 	}
 	
-	#[test]
-	fn repeta_without_pana_cand() {
-		assert_parsing_error! {
-r#"repeta
+	test_parsing_error! {
+		repeta_without_pana_cand,
+		ParsingError(
+			3, 0,
+			RepetaWithoutPanaCand),
+		r#"
+			repeta
+				
+				
+		"#
+	}
 	
-	
-"#,
-			ParsingError(
-				3, 0,
-				RepetaWithoutPanaCand)
-		}
+	test_parsing_error! {
+		weird,
+		ParsingError(
+			3, 0,
+			RepetaWithoutPanaCand),
+		r#"
+			scrie 12+3 ; daca a=12 atunci
+		"#
 	}
 }

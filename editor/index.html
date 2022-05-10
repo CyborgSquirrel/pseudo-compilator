@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta content="text/html;charset=utf-8" http-equiv="Content-Type"/>
+		<meta name="color-scheme" content="dark">
+		
+		<title>Pseudocod Editor</title>
+		
+		<style type="text/css" media="screen">
+			/*.ace_text-layer div {
+				padding-left: 1ch;
+			}*/
+			html { width: 100vw; height: 100vh; }
+			:root {
+				--border-size: 4px;
+				--dark-background-color: #191A21;
+				--background-color: #282A36;
+				--text-color: #F8F8F2;
+				--red: #FF5555;
+				--cyan: #8BE9FD;
+				--pink: #FF79C6;
+			}
+			
+			/* hackery to help it resemble pseudocode :) */
+			.ace_keyword.ace_control.ace_begin::before {
+				content: "┌";
+				position: absolute;
+				color: var(--pink);
+				left: -1ch;
+			}
+			.ace_text.ace_whitespace::before, .ace_indent-guide::before, .ace_keyword.ace_control.ace_middle::before {
+				content: "│";
+				position: absolute;
+				color: var(--pink);
+				left: -1ch;
+			}
+			.ace_keyword.ace_control.ace_stop::before {
+				content: "└";
+				position: absolute;
+				color: var(--pink);
+				left: -1ch;
+			}
+			.ace_keyword.ace_control, .ace_text.ace_whitespace, .ace_indent-guide {
+				position: relative;
+			}
+			.ace_indent-guide {
+				background: unset !important;
+			}
+			
+			#editor, #in-textbox, #out { font-size: inherit; }
+			body {
+				font-size: 18px;
+				font-family: monospace;
+				color: var(--text-color);
+				height: 100%;
+				width: 100%;
+				margin: 0;
+				
+				display: grid;
+				grid-template-columns: 40px 2fr 1fr;
+				grid-template-rows: auto;
+				
+				gap: var(--border-size);
+				
+				background-color: var(--dark-background-color);
+				
+				border-style: solid;
+				border-width: var(--border-size);
+				border-color: var(--dark-background-color);
+				box-sizing: border-box;
+			}
+			#buttons {
+				grid-column: 1;
+				grid-row: 1;
+				background-color: var(--background-color);
+			}
+			#buttons button {
+				width: 100%;
+				aspect-ratio: 1;
+				background-color: green;
+				background-image: url(/play.svg);
+				background-size: 75%;
+				background-repeat: no-repeat;
+				background-position: center center;
+				border: 0;
+				padding: 0;
+				display: block;
+			}
+			#buttons button:active {
+				filter: brightness(75%);
+			}
+			#editor {
+				grid-column: 2;
+				grid-row: 1;
+			}
+			#io {
+				grid-column: 3;
+				grid-row: 1;
+				
+				display: grid;
+				grid-template-columns: 100%;
+				grid-template-rows: auto 1.5em;
+				gap: var(--border-size);
+				
+				overflow: hidden;
+			}
+			#in {
+				background-color: var(--background-color);
+				
+				grid-column: 1;
+				grid-row: 2;
+				
+				display: grid;
+				grid-template-columns: 1.5em auto;
+				grid-template-rows: 100%;
+			}
+			#in.waiting {
+				outline-offset: -2px;
+				outline-width: 2px;
+				outline-color: var(--red);
+				outline-style: solid;
+			}
+			#in-textbox {
+				background-color: var(--background-color);
+				color: inherit;
+				
+				border: 0;
+				padding: 0;
+				width: 100%;
+			}
+			#in-textbox:focus {
+				outline: none;
+			}
+			#in label {
+				margin: auto;
+				user-select: none;
+			}
+			#out {
+				background-color: var(--background-color);
+				overflow: auto;
+				
+				grid-column: 1;
+				grid-row: 1;
+				padding: 2px;
+			}
+			#out span.error {
+				color: var(--red);
+				font-weight: bold;
+			}
+			#out span.hint {
+				color: var(--cyan);
+				font-weight: bold;
+			}
+		</style>
+	</head>
+	
+	<body>
+		<div id="buttons">
+			<button type="button" onclick="reRun()">
+			</button>
+		</div>
+		<div id="editor"></div>
+		<div id="io">
+			<output id="out"></output>
+			<div id="in" onClick="focusById('in-textbox')">
+				<label for="in-textbox">&gt;</label>
+				<input id="in-textbox" type="text" autocomplete="off">
+			</div>
+		</div>
+	</body>
+	
+	<script type="module">
+		import init, { OwningRunner, RuntimeState } from './pkg/pseudocompilator.js';
+		
+		await init();
+		window.OwningRunner = OwningRunner;
+		window.RuntimeState = RuntimeState;
+		
+		let runner = new OwningRunner("scrie 123");
+		runner.run();
+		console.log(runner.flushOutput());
+	</script>
+	
+	<script src="/ace-builds/src-noconflict/ace.js" type="text/javascript" charset="utf-8"></script>
+	
+	<script>
+		var editor = ace.edit("editor");
+		editor.setOption("useSoftTabs", false);
+		editor.setOption("displayIndentGuides", true);
+		editor.setTheme("ace/theme/dracula");
+		editor.session.setMode("ace/mode/pseudocod");
+		
+		var runner = null;
+		
+		var output = document.getElementById("out");
+		var inputTextbox = document.getElementById("in-textbox");
+		var input = document.getElementById("in");
+		inputTextbox.addEventListener("keyup", function(event) {
+			if (event.code == "Enter") {
+				let value = event.target.value;
+				output.innerHTML += `> ${value}<br>`;
+				if (runner !== null) {
+					runner.appendInput(value + "\n");
+					run();
+				}
+				event.target.value = "";
+			}
+		});
+		
+		function writeError(error) {
+			output.innerHTML += `<span class="error">${error}</span><br>`;
+		}
+		
+		function writeHint(hint) {
+			output.innerHTML += `<span class="hint">${hint}</span><br>`;
+		}
+		
+		function reRun() {
+			runner = null;
+			run();
+		}
+		
+		function run() {
+			let code = editor.getValue();
+			if (!runner) {
+				output.innerHTML = "";
+				input.classList.remove("waiting");
+				try {
+					runner = new OwningRunner(code);
+				} catch (error) {
+					writeError(error);
+				}
+			}
+			if (runner) {
+				let error = null;
+				let state = null;
+				try {
+					state = runner.run();
+				} catch (caughtError) {
+					error = caughtError;
+				}
+				
+				output.innerHTML += runner.flushOutput().replaceAll("\n", "<br>");
+				
+				if (state !== null) {
+					switch (state) {
+						case RuntimeState.Running:
+							throw "o no";
+							break;
+						case RuntimeState.WaitingForInput:
+							input.classList.add("waiting");
+							break;
+						case RuntimeState.Finished:
+							input.classList.remove("waiting");
+							runner = null;
+							writeHint("[Programul s-a terminat fără erori]");
+							break;
+					}
+				}
+				
+				if (error !== null) {
+					writeError(error);
+					runner = null;
+				}
+			}
+		}
+		
+		function focusById(id) {
+			var element = document.getElementById(id);
+			if (element !== null) { element.focus(); }
+		}
+	</script>
+</html>

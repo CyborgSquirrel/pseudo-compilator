@@ -269,13 +269,13 @@ mod tests {
 	}
 	
 	macro_rules! test_runtime_error {
-		{ $function:ident, $input:expr, $error:expr, $code:expr } => {
+		{ $function:ident, $input:expr, $err:expr, $code:expr } => {
 			#[test]
 			fn $function() {
 				let mut input = std::io::BufReader::new($input.as_bytes());
 				let mut output = Vec::new();
 				let err = interpret(indoc! { $code }, &mut input, &mut output).unwrap_err();
-				assert_eq!(err, InterpretingError::RuntimeError($error));
+				assert_eq!(err, InterpretingError::RuntimeError($err));
 			}
 		}
 	}

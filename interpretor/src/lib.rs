@@ -162,6 +162,8 @@ impl parse::ParsingError {
 					format!("aici ar fi trebuit să apară o expresie."),
 				ExpectedBoolRvalue =>
 					format!("aici ar fi trebuit să apară o condiție."),
+				ExpectedNonrecursiveInstruction =>
+					format!("aici ar fi trebuit să apară o atribuire, interschimbare, sau o instrucțiune de tip scrie sau citește."),
 				TokenParsingError(err) => {
 					use parse::expression::TokenParsingError::*;
 					match err {

@@ -10,7 +10,7 @@ fn main() {
 	let mut code = String::new();
 	program_file.read_to_string(&mut code).unwrap();
 	
-	let result = pseudocompilator::interpret(
+	let result = pseudo_interpretor::interpret(
 		code.as_str(),
 		&mut stdin().lock(),
 		&mut BufWriter::new(stdout()),

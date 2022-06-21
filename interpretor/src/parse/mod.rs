@@ -40,6 +40,7 @@ pub enum LineParsingErrorKind {
 	ExpectedScrieParam,
 	ExpectedFloatRvalue,
 	ExpectedBoolRvalue,
+	ExpectedNonrecursiveInstruction,
 	TokenParsingError(TokenParsingError),
 	ExpressionConstructionError(ExpressionConstructionError<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>),
 }
@@ -123,12 +124,15 @@ impl<'a> LineCursor<'a> {
 		self
 	}
 	fn read_while<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> (Self, &'a str) {
-		let mut graphemes = 0;
-		let offset = self.code().grapheme_indices(true)
-			.skip_while(|(_, x)| { graphemes += 1; predicate(x)})
-			.next()
-			.map(|(i, _)| i)
-			.unwrap_or(self.code().len());
+		let (graphemes, offset) =
+			self.code().grapheme_indices(true)
+				.map(|(i, x)| { (i, Some(x)) })
+				.chain(std::iter::once((self.code.len(), None)))
+			.enumerate()
+				.skip_while(|(_, (_, x))| { x.map_or(false, &mut predicate) })
+				.next()
+				.map(|(g, (i, _))| { (g, i) })
+			.unwrap(); // this unwrap shouldn't ever fail
 		let result = self.code_until(offset);
 		self.grapheme += graphemes;
 		self.index += offset;
@@ -223,7 +227,7 @@ impl<'a> LineCursor<'a> {
 	}
 	
 	fn parse_second_step_pentru(self) -> LineParsingResult<Instructiune<'a>> {
-		let (new_self, lvalue) =  self.skip_spaces().parse_lvalue()?;
+		let (new_self, lvalue) = self.skip_spaces().parse_lvalue()?;
 		let (new_self, _) = new_self.skip_spaces().expect_str("<-")?;
 		let (new_self, start) = new_self.skip_spaces().parse_float_rvalue()?;
 		
@@ -281,7 +285,10 @@ impl<'a> LineCursor<'a> {
 		let mut done = false;
 		let mut instructions = Vec::new();
 		while !done {
+			dbg!(self.grapheme);
 			let (new_self, instruction) = match name {
+				"daca"|"dacă"|"cat"|"cât"|"pentru" =>
+					Err(self.make_error(LineParsingErrorKind::ExpectedNonrecursiveInstruction)),
 				"scrie" =>
 					self.parse_second_step_scrie(),
 				"citeste"|"citește" =>
@@ -311,43 +318,6 @@ impl<'a> LineCursor<'a> {
 				Ok(vec![new_self.parse_second_step_cat_timp()?]),
 			"pentru" =>
 				Ok(vec![new_self.parse_second_step_pentru()?]),
-			_ =>
-				new_self.parse_nonrecursive_instructions(name),
-		}
-	}
-	
-	fn parse_stuff(self) -> LineParsingResult<Vec<Instructiune<'a>>> {
-		let mut done = false;
-		let mut instructions = Vec::new();
-		while !done {
-			let (new_self, instruction) = match name {
-				"daca"|"dacă" =>
-					Ok(vec![new_self.parse_second_step_daca()?]),
-				"cat"|"cât" =>
-					Ok(vec![new_self.parse_second_step_cat_timp()?]),
-				"pentru" =>
-					Ok(vec![new_self.parse_second_step_pentru()?]),
-				"scrie" =>
-					self.parse_second_step_scrie(),
-				"citeste"|"citește" =>
-					self.parse_second_step_citeste(),
-				x =>
-					self.parse_second_step_lvalue(Lvalue(x)),
-			}?;
-			instructions.push(instruction);
-			self = new_self.skip_spaces();
-			if let Ok((new_self, _)) = self.expect_grapheme(";") {
-				self = new_self.skip_spaces();
-				let (new_self, new_name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
-				self = new_self;
-				name = new_name;
-			} else { done = true }
-		}
-		self.skip_spaces().expect_end()?;
-		Ok(instructions)
-		
-		let (new_self, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
-		match name {
 			_ =>
 				new_self.parse_nonrecursive_instructions(name),
 		}
@@ -539,7 +509,7 @@ mod tests {
 	test_parsing_error! {
 		missing_operand_or_unary_operator,
 		ParsingError(
-			1, 16,
+			1, 15,
 			LineParsingError(
 				ExpressionConstructionError(
 					ExpectationError(
@@ -550,7 +520,7 @@ mod tests {
 	test_parsing_error! {
 		missing_operand,
 		ParsingError(
-			1, 17,
+			1, 16,
 			LineParsingError(
 				ExpressionConstructionError(
 					ExpectationError(
@@ -561,7 +531,7 @@ mod tests {
 	test_parsing_error! {
 		mismatched_parens,
 		ParsingError(
-			1, 11,
+			1, 10,
 			LineParsingError(
 				ExpressionConstructionError(
 					MismatchedParens))),
@@ -571,7 +541,7 @@ mod tests {
 	test_parsing_error! {
 		too_many_unary_operators,
 		ParsingError(
-			1, 8,
+			1, 7,
 			LineParsingError(
 				ExpressionConstructionError(
 					ExpectationError(
@@ -688,8 +658,8 @@ mod tests {
 	test_parsing_error! {
 		weird,
 		ParsingError(
-			3, 0,
-			RepetaWithoutPanaCand),
+			1, 17,
+			LineParsingError(ExpectedNonrecursiveInstruction)),
 		r#"
 			scrie 12+3 ; daca a=12 atunci
 		"#

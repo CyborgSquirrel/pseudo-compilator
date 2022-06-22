@@ -1,14 +1,16 @@
+use enumflags2::{bitflags, BitFlags, make_bitflags};
+
 use trace::trace;
 trace::init_depth_var!();
 
 use unicode_segmentation::{UnicodeSegmentation, GraphemeIndices};
 use super::{LineCursor, LineParsingIntermediateResult, LineParsingErrorKind, get_grapheme_kind, GraphemeKind};
-use crate::syntax::{
+use crate::{syntax::{
 	Lvalue,
 	FloatUnaryOp, BoolUnaryOp,
 	FloatBinaryOp, BoolBinaryOp, BoolFloatBinaryOp, BoolBoolBinaryOp,
 	FloatRvalue, BoolRvalue,
-};
+}, parse::LineParsingError};
 
 // bool and float stuff
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -29,436 +31,16 @@ enum BoolOrFloatRvalue<'a> {
 	FloatRvalue(FloatRvalue<'a>),
 }
 
-fn get_priority(operator: &Operator<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>) -> u32 {
-	match operator {
-		Operator::ParenOp(_, kind) => {
-			match kind {
-				ParenKind::Lparen => 0,
-				ParenKind::Rparen => panic!(),
-			}
+macro_rules! yeet {
+	( $option:expr, $none:expr ) => {
+		match $option {
+			Some(some) => some,
+			None => return $none,
 		}
-		Operator::UnaryOp(..) => 0,
-		Operator::BinaryOp(op) => match op {
-			BoolOrFloatBinaryOp::BoolBinaryOp(op) => match op {
-				BoolBinaryOp::BoolBoolBinaryOp(op) => match op {
-					BoolBoolBinaryOp::Or => 1,
-					BoolBoolBinaryOp::And => 2,
-				}
-				BoolBinaryOp::BoolFloatBinaryOp(op) => match op {
-					BoolFloatBinaryOp::Equ => 3,
-					BoolFloatBinaryOp::Nequ => 3,
-					BoolFloatBinaryOp::Lt => 3,
-					BoolFloatBinaryOp::Lte => 3,
-					BoolFloatBinaryOp::Gt => 3,
-					BoolFloatBinaryOp::Gte => 3,
-					BoolFloatBinaryOp::Divides => 3,
-				}
-			}
-			BoolOrFloatBinaryOp::FloatBinaryOp(op) => match op {
-				FloatBinaryOp::Add => 4,
-				FloatBinaryOp::Sub => 4,
-				FloatBinaryOp::Mul => 5,
-				FloatBinaryOp::Div => 5,
-				FloatBinaryOp::Rem => 5,
-			}
-		}
-	}
-}
-
-fn evaluate_top_operation<'a>(
-	operator: Operator<BoolOrFloatUnaryOp,
-	BoolOrFloatBinaryOp>,
-	stack: &mut Vec<BoolOrFloatRvalue<'a>>
-) -> ExpressionConstructorResult<BoolOrFloatRvalue<'a>, BoolOrFloatUnaryOp, BoolOrFloatBinaryOp> {
-	use ExpressionConstructionError::*;
-	match operator {
-		Operator::ParenOp(_, kind) => match kind {
-			ParenKind::Lparen => Err(UnclosedLparen),
-			ParenKind::Rparen => panic!(),
-		}
-		Operator::BinaryOp(op) => {
-			let x = stack.pop().ok_or(MissingOperand)?;
-			let y = stack.pop().ok_or(MissingOperand)?;
-			match op {
-				BoolOrFloatBinaryOp::BoolBinaryOp(op) => {
-					match op {
-						BoolBinaryOp::BoolBoolBinaryOp(op) => {
-							if let (BoolOrFloatRvalue::BoolRvalue(y), BoolOrFloatRvalue::BoolRvalue(x)) = (y, x) {
-								return Ok(BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolBoolBinaryOp(op, Box::new(y), Box::new(x))));
-							}
-						}
-						BoolBinaryOp::BoolFloatBinaryOp(op) => {
-							if let (BoolOrFloatRvalue::FloatRvalue(y), BoolOrFloatRvalue::FloatRvalue(x)) = (y, x) {
-								return Ok(BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolFloatBinaryOp(op, y, x)));
-							}
-						}
-					}
-				}
-				BoolOrFloatBinaryOp::FloatBinaryOp(op) => {
-					if let (BoolOrFloatRvalue::FloatRvalue(y), BoolOrFloatRvalue::FloatRvalue(x)) = (y, x) {
-						return Ok(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::BinaryOp(op, Box::new(y), Box::new(x))));
-					}
-				}
-			}
-			
-			Err(InvalidBinaryOpOperands(op))
-		}
-		Operator::UnaryOp(op) => {
-			let x = stack.pop().ok_or(MissingOperand)?;
-			match (op, x) {
-				(BoolOrFloatUnaryOp::FloatUnaryOp(op), BoolOrFloatRvalue::FloatRvalue(x)) =>
-					Ok(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::UnaryOp(op, Box::new(x)))),
-				_ =>
-					Err(InvalidUnaryOpOperands(op)),
-			}
-		}
-	}
-}
-
-#[derive(Debug)]
-struct ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvaluateTopOperationFn> {
-	operators: Vec<Operator<UnaryOp, BinaryOp>>,
-	operands: Vec<Operand>,
-	expecting: Expecting,
-	get_priority: GetPriorityFn,
-	evaluate_top_operation: EvaluateTopOperationFn,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Expecting {
-	Operand, OperandOrUnaryOperator, BinaryOperator
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum ExpressionConstructionError<UnaryOp, BinaryOp> {
-	ExpectationError(Expecting),
-	MismatchedParens, UnclosedRparen, UnclosedLparen,
-	InvalidUnaryOpOperands(UnaryOp),
-	InvalidBinaryOpOperands(BinaryOp),
-	MissingOperand,
-}
-
-impl From<ExpressionConstructionError<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>> for LineParsingErrorKind {
-	fn from(err: ExpressionConstructionError<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>) -> Self {
-		LineParsingErrorKind::ExpressionConstructionError(err)
-	}
-}
-
-type ExpressionConstructorResult<T, UnaryOp, BinaryOp> = Result<T, ExpressionConstructionError<UnaryOp, BinaryOp>>;
-
-impl<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
-ExpressionConstructor<UnaryOp, BinaryOp, Operand, GetPriorityFn, EvalFn>
-where
-	GetPriorityFn: Fn(&Operator<UnaryOp, BinaryOp>) -> u32,
-	EvalFn: Fn(Operator<UnaryOp, BinaryOp>, &mut Vec<Operand>) -> ExpressionConstructorResult<Operand, UnaryOp, BinaryOp>,
-	Operand: std::fmt::Debug,
-	UnaryOp: std::fmt::Debug + Eq,
-	BinaryOp: std::fmt::Debug,
-{
-	fn new(get_priority: GetPriorityFn, evaluate_top_operation: EvalFn) -> Self {
-		Self {
-			operators: Vec::new(),
-			operands: Vec::new(),
-			expecting: Expecting::OperandOrUnaryOperator,
-			get_priority,
-			evaluate_top_operation,
-		}
-	}
-	fn make_expectation_error(&self) -> ExpressionConstructionError<UnaryOp, BinaryOp> {
-		ExpressionConstructionError::ExpectationError(self.expecting)
-	}
-	fn eval_top_op(&mut self) -> ExpressionConstructorResult<(), UnaryOp, BinaryOp> {
-		let last = self.operators.pop().ok_or(self.make_expectation_error())?;
-		let operand = (self.evaluate_top_operation)(last, &mut self.operands)?;
-		self.operands.push(operand);
-		Ok(())
-	}
-	fn push_operator(&mut self, operator: Operator<UnaryOp, BinaryOp>) -> ExpressionConstructorResult<bool, UnaryOp, BinaryOp> {
-		match &operator {
-			Operator::ParenOp(rop, rkind) => {
-				match rkind {
-					ParenKind::Lparen => { }
-					ParenKind::Rparen => {
-						let mut found_lparen = false;
-						while let Some(last) = self.operators.last() {
-							if let Operator::ParenOp(lop, lkind) = last {
-								assert!(matches!(lkind, ParenKind::Lparen));
-								if rop != lop {
-									return Err(ExpressionConstructionError::MismatchedParens);
-								}
-								if let Operator::ParenOp(lop, ParenKind::Lparen) = self.operators.pop().unwrap() {
-									self.operators.push(Operator::UnaryOp(lop));
-								} else { panic!() }
-								found_lparen = true;
-								break;
-							} else {
-								self.eval_top_op()?;
-							}
-						}
-						
-						if !found_lparen {
-							return Err(ExpressionConstructionError::UnclosedRparen);
-						}
-					}
-				}
-			}
-			Operator::BinaryOp(..) => {
-				if !matches!(self.expecting, Expecting::BinaryOperator) { return Ok(false) }
-				self.expecting = Expecting::OperandOrUnaryOperator;
-				while let Some(last) = self.operators.last() {
-					if (self.get_priority)(&operator) <= (self.get_priority)(last) {
-						self.eval_top_op()?;
-					} else {
-						break;
-					}
-				}
-			}
-			Operator::UnaryOp(..) => {
-				if !matches!(self.expecting, Expecting::OperandOrUnaryOperator) { return Ok(false) }
-				self.expecting = Expecting::Operand;
-			}
-		}
-		if !matches!(operator, Operator::ParenOp(_, ParenKind::Rparen)) {
-			self.operators.push(operator);
-		}
-		Ok(true)
-	}
-	fn push_operand(&mut self, operand: Operand) -> bool {
-		if !matches!(self.expecting, Expecting::Operand|Expecting::OperandOrUnaryOperator) { return false }
-		self.expecting = Expecting::BinaryOperator;
-		self.operands.push(operand);
-		true
-	}
-	fn finish(mut self) -> ExpressionConstructorResult<Operand, UnaryOp, BinaryOp> {
-		while !self.operators.is_empty() {
-			self.eval_top_op()?;
-		}
-		match self.operands.len().cmp(&1) {
-			std::cmp::Ordering::Less => Err(self.make_expectation_error()),
-			std::cmp::Ordering::Greater => Err(self.make_expectation_error()),
-			std::cmp::Ordering::Equal => Ok(self.operands.pop().unwrap()),
-		}
-	}
-}
-
-#[derive(Debug)]
-enum State {
-	Unsure,
-	ParsingReserved,
-	ParsingOther(OtherKind),
-}
-
-#[derive(Debug)]
-enum OtherKind {
-	LvalueOrSauOrSi,
-	FloatLiteral,
-}
-
-#[derive(Debug)]
-enum ParenKind { Lparen, Rparen }
-
-#[derive(Debug)]
-enum Operator<UnaryOp, BinaryOp> { ParenOp(UnaryOp, ParenKind), UnaryOp(UnaryOp), BinaryOp(BinaryOp) }
-
-#[derive(Debug)]
-enum Token<'a> {
-	Operand(BoolOrFloatRvalue<'a>),
-	Operator(Operator<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum TokenParsingError {
-	InvalidFloatLiteral(String),
-	InvalidOperator(String),
-}
-
-impl From<TokenParsingError> for LineParsingErrorKind {
-	fn from(err: TokenParsingError) -> Self {
-		LineParsingErrorKind::TokenParsingError(err)
-	}
-}
-
-fn try_parse_token<'a>(
-	expecting: &Expecting,
-	state: &State,
-	current: &'a str,
-	next: Option<&'a str>
-) -> Option<Result<Token<'a>, TokenParsingError>> {
-	fn bool_bool_binary_op_operand<'a>(op: BoolBoolBinaryOp) -> Token<'a> { Token::Operator(Operator::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(op)))) }
-	fn bool_float_binary_op_operand<'a>(op: BoolFloatBinaryOp) -> Token<'a> { Token::Operator(Operator::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(op)))) }
-	fn float_rvalue<'a>(rvalue: FloatRvalue<'a>) -> Token<'a> { Token::Operand(BoolOrFloatRvalue::FloatRvalue(rvalue)) }
-	fn float_binary_op_operand<'a>(op: FloatBinaryOp) -> Token<'a> { Token::Operator(Operator::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(op))) }
-	fn float_unary_op_operand<'a>(op: FloatUnaryOp) -> Token<'a> { Token::Operator(Operator::UnaryOp(BoolOrFloatUnaryOp::FloatUnaryOp(op))) }
-	fn float_paren_op_operand<'a>(op: FloatUnaryOp, kind: ParenKind) -> Token<'a> { Token::Operator(Operator::ParenOp(BoolOrFloatUnaryOp::FloatUnaryOp(op), kind)) }
-	match state {
-		State::ParsingOther(other_kind) => {
-			if next.is_none() {
-				Some( match other_kind {
-					OtherKind::LvalueOrSauOrSi => Ok( match (expecting, current) {
-						(Expecting::BinaryOperator, "si"|"și") =>
-							bool_bool_binary_op_operand(BoolBoolBinaryOp::And),
-						(Expecting::BinaryOperator, "sau") =>
-							bool_bool_binary_op_operand(BoolBoolBinaryOp::Or),
-						(_, _) =>
-							float_rvalue(FloatRvalue::Lvalue(Lvalue(current))),
-					}),
-					OtherKind::FloatLiteral => {
-						if let Ok(literal) = current.parse() {
-							Ok(float_rvalue(FloatRvalue::Literal(literal)))
-						} else { Err(TokenParsingError::InvalidFloatLiteral(String::from(current))) }
-					}
-				})
-			} else { None }
-		}
-		State::ParsingReserved => {
-			let parse_reserved = |name: &'a str| -> Option<Option<Token<'a>>> {
-				match name {
-					""   => Some(None),
-					
-					"("  => Some(Some(float_paren_op_operand(FloatUnaryOp::Ident, ParenKind::Lparen))),
-					")"  => Some(Some(float_paren_op_operand(FloatUnaryOp::Ident, ParenKind::Rparen))),
-					
-					"["  => Some(Some(float_paren_op_operand(FloatUnaryOp::Whole, ParenKind::Lparen))),
-					"]"  => Some(Some(float_paren_op_operand(FloatUnaryOp::Whole, ParenKind::Rparen))),
-					
-					"="  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Equ))),
-					"!"  => Some(None),
-					"!=" => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Nequ))),
-					"<"  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Lt))),
-					"<=" => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Lte))),
-					">"  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Gt))),
-					">=" => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Gte))),
-					"|"  => Some(Some(bool_float_binary_op_operand(BoolFloatBinaryOp::Divides))),
-					
-					"+" => match expecting {
-						Expecting::BinaryOperator => Some(Some(float_binary_op_operand(FloatBinaryOp::Add))),
-						Expecting::OperandOrUnaryOperator => Some(Some(float_unary_op_operand(FloatUnaryOp::Ident))),
-						_ => None,
-					}
-					"-" => match expecting {
-						Expecting::BinaryOperator => Some(Some(float_binary_op_operand(FloatBinaryOp::Sub))),
-						Expecting::OperandOrUnaryOperator => Some(Some(float_unary_op_operand(FloatUnaryOp::Neg))),
-						_ => None,
-					}
-					
-					"*" => Some(Some(float_binary_op_operand(FloatBinaryOp::Mul))),
-					"/" => Some(Some(float_binary_op_operand(FloatBinaryOp::Div))),
-					"%" => Some(Some(float_binary_op_operand(FloatBinaryOp::Rem))),
-					
-					_ => None,
-				}
-			};
-			let must_push =
-				if let Some(next) = next { parse_reserved(next).is_none() }
-				else { matches!(expecting, Expecting::BinaryOperator|Expecting::OperandOrUnaryOperator) };
-			if must_push {
-				Some(
-					parse_reserved(current)
-						.flatten()
-						.ok_or(TokenParsingError::InvalidOperator(String::from(current)))
-				)
-			} else { None }
-		}
-		State::Unsure => None,
 	}
 }
 
 impl<'a> LineCursor<'a> {
-	fn parse_bool_or_float_rvalue(mut self) -> LineParsingIntermediateResult<'a, BoolOrFloatRvalue<'a>> {
-		let mut expression_constructor = ExpressionConstructor::new(get_priority, evaluate_top_operation);
-		let mut state = State::Unsure;
-		let mut graphemes = self.code().grapheme_indices(true);
-		
-		let mut try_push_token = |cursor: &mut LineCursor<'a>, grapheme, current, graphemes: &mut GraphemeIndices<'a>| {
-			let mut keep_going = true;
-			
-			let grapheme_and_its_kind =
-				if let Some(grapheme) = grapheme {
-					if let Some(grapheme_kind) = get_grapheme_kind(grapheme) {
-						Some((grapheme, grapheme_kind))
-					} else { keep_going = false; None }
-				} else { None };
-			
-			let next =
-				if let Some((grapheme, grapheme_kind)) = &grapheme_and_its_kind {
-					match (grapheme_kind, &state) {
-						(GraphemeKind::Reserved, State::ParsingReserved) |
-						(GraphemeKind::Other, State::ParsingOther(..))
-							=> Some(cursor.code_until(current+grapheme.len())),
-						_
-							=> None,
-					}
-				} else { None };
-			
-			let token = try_parse_token(
-				&expression_constructor.expecting, &state,
-				cursor.code_until(current), next
-			);
-			match token {
-				None => { }
-				Some(token) => {
-					let token = token.map_err(|err| match (expression_constructor.expecting, &err) {
-						(Expecting::OperandOrUnaryOperator|Expecting::Operand, TokenParsingError::InvalidFloatLiteral(..))|
-						(Expecting::OperandOrUnaryOperator|Expecting::BinaryOperator, TokenParsingError::InvalidOperator(..))
-							=> cursor.make_error(err),
-						_
-							=> cursor.make_error(ExpressionConstructionError::ExpectationError(expression_constructor.expecting)),
-					})?;
-					
-					match token {
-						Token::Operand(BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Lvalue(Lvalue(
-							"atunci"|"executa"|"execută"
-						)))) => {
-							keep_going = false;
-						}
-						token => {
-							if match token {
-								Token::Operand(operand) => expression_constructor.push_operand(operand),
-								Token::Operator(operand) => expression_constructor.push_operator(operand).map_err(|err| cursor.make_error(err))?,
-							} {
-								cursor.advance_by(current);
-								*graphemes = cursor.code().grapheme_indices(true);
-								state = State::Unsure;
-							} else { keep_going = false }
-						}
-					}
-				}
-			}
-			
-			if let Some((grapheme, grapheme_kind)) = &grapheme_and_its_kind {
-				if let State::Unsure = &state {
-					state = match grapheme_kind {
-						GraphemeKind::Ignored => {
-							cursor.advance_by(grapheme.len());
-							*graphemes = cursor.code().grapheme_indices(true);
-							State::Unsure
-						},
-						GraphemeKind::Reserved => State::ParsingReserved,
-						GraphemeKind::Other => State::ParsingOther(
-							match *grapheme {
-								"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"
-									=> OtherKind::FloatLiteral,
-								_
-									=> OtherKind::LvalueOrSauOrSi,
-							}
-						),
-					};
-				}
-			}
-			Ok(keep_going)
-		};
-		while let Some((current, grapheme)) = graphemes.next() {
-			if !try_push_token(&mut self, Some(grapheme), current, &mut graphemes)? { break };
-		}
-		if graphemes.next().is_none() {
-			let current = self.code().len();
-			try_push_token(&mut self, None, current, &mut graphemes)?;
-		}
-		expression_constructor.finish()
-			.map(|rvalue| (self, rvalue))
-			.map_err(|err| self.make_error(err))
-	}
-	
 	pub fn parse_float_rvalue(self) -> LineParsingIntermediateResult<'a, FloatRvalue<'a>> {
 		let rvalue = self.parse_bool_or_float_rvalue()?;
 		match rvalue {
@@ -473,5 +55,326 @@ impl<'a> LineCursor<'a> {
 			(_, BoolOrFloatRvalue::FloatRvalue(..)) => Err(self.make_error(LineParsingErrorKind::ExpectedBoolRvalue)),
 			(new_self, BoolOrFloatRvalue::BoolRvalue(rvalue)) => Ok((new_self, rvalue)),
 		}
+	}
+	
+	fn parse_bool_or_float_rvalue(self) -> LineParsingIntermediateResult<'a, BoolOrFloatRvalue<'a>> {
+		#[bitflags]
+		#[repr(u8)]
+		#[derive(Clone, Copy)]
+		enum Expecting {
+			PrefixUnaryOp,
+			
+			// This one also includes LParens.
+			Rvalue,
+			
+			// This one also include RParens and is a marker for the end.
+			Operator,
+		}
+		type ExpectingFlags = BitFlags<Expecting>;
+		
+		#[derive(Debug)]
+		enum Operator<'a> {
+			ParenUnaryOp(&'a str),
+			PrefixUnaryOp(BoolOrFloatUnaryOp),
+			BinaryOp(BoolOrFloatBinaryOp),
+		}
+		
+		fn get_priority(operator: &Operator) -> u32 {
+			match operator {
+				Operator::ParenUnaryOp(..) => 0,
+				Operator::PrefixUnaryOp(..) => 1,
+				Operator::BinaryOp(op) => match op {
+					BoolOrFloatBinaryOp::BoolBinaryOp(op) => match op {
+						BoolBinaryOp::BoolBoolBinaryOp(op) => match op {
+							BoolBoolBinaryOp::Or => 2,
+							BoolBoolBinaryOp::And => 3,
+						}
+						BoolBinaryOp::BoolFloatBinaryOp(op) => match op {
+							BoolFloatBinaryOp::Eq => 4,
+							BoolFloatBinaryOp::Neq => 4,
+							BoolFloatBinaryOp::Lt => 4,
+							BoolFloatBinaryOp::Lte => 4,
+							BoolFloatBinaryOp::Gt => 4,
+							BoolFloatBinaryOp::Gte => 4,
+							BoolFloatBinaryOp::Divides => 4,
+						}
+					}
+					BoolOrFloatBinaryOp::FloatBinaryOp(op) => match op {
+						FloatBinaryOp::Add => 5,
+						FloatBinaryOp::Sub => 5,
+						FloatBinaryOp::Mul => 6,
+						FloatBinaryOp::Div => 6,
+						FloatBinaryOp::Rem => 6,
+					}
+				}
+			}
+		}
+		
+		struct Megatron<'a> {
+			cursor: LineCursor<'a>,
+			expecting: ExpectingFlags,
+			operands: Vec<BoolOrFloatRvalue<'a>>,
+			operators: Vec<Operator<'a>>,
+		}
+		
+		type MegaResult<T> = Result<T, LineParsingError>;
+		
+		impl<'a> Megatron<'a> {
+			fn new(cursor: LineCursor<'a>) -> Self {
+				Self {
+					cursor,
+					expecting: make_bitflags!(Expecting::{PrefixUnaryOp | Rvalue}),
+					operands: Vec::new(),
+					operators: Vec::new(),
+				}
+			}
+			
+			#[trace]
+			fn try_prefix_float_unary_op(&mut self) -> bool {
+				let (new_cursor, grapheme_0) = yeet!(self.cursor.read_one(), false);
+				let op = match grapheme_0 {
+					"+" => FloatUnaryOp::Ident,
+					"-" => FloatUnaryOp::Neg,
+					_ => return false,
+				};
+				
+				let op = Operator::PrefixUnaryOp(BoolOrFloatUnaryOp::FloatUnaryOp(op));
+				self.expecting = make_bitflags!(Expecting::{Rvalue});
+				self.cursor = new_cursor;
+				self.operators.push(op);
+				true
+			}
+			
+			#[trace]
+			fn try_lparen_unary_op(&mut self) -> bool {
+				let (new_cursor, grapheme_0) = yeet!(self.cursor.read_one(), false);
+				let op = match grapheme_0 {
+					"(" => "(",
+					"[" => "[",
+					_ => return false,
+				};
+				
+				self.operators.push(Operator::ParenUnaryOp(op));
+				self.expecting = make_bitflags!(Expecting::{PrefixUnaryOp | Rvalue});
+				self.cursor = new_cursor;
+				true
+			}
+			
+			#[trace]
+			fn try_rparen_unary_op(&mut self) -> MegaResult<bool> {
+				let (new_cursor, grapheme_0) = yeet!(self.cursor.read_one(), Ok(false));
+				let op = match grapheme_0 {
+					")" => ")",
+					"]" => "]",
+					_ => return Ok(false),
+				};
+				
+				let rparen_op = op;
+				while !self.operators.is_empty()
+					&& !matches!(dbg!(self.operators.last()), Some(Operator::ParenUnaryOp(..))) {
+					self.eval_top_operation();
+				}
+				
+				if let Some(Operator::ParenUnaryOp(lparen_op)) = self.operators.pop() {
+					let x = self.operands.pop().unwrap();
+					let result = match x {
+						BoolOrFloatRvalue::BoolRvalue(..) => {
+							let _op = match (lparen_op, rparen_op) {
+								("(", ")") => BoolUnaryOp::Ident,
+								_ => return Err(self.cursor.make_error(LineParsingErrorKind::MismatchedParens)),
+							};
+							x
+						}
+						BoolOrFloatRvalue::FloatRvalue(x) => {
+							let op = match (lparen_op, rparen_op) {
+								("(", ")") => FloatUnaryOp::Ident,
+								("[", "]") => FloatUnaryOp::Whole,
+								_ => return Err(self.cursor.make_error(LineParsingErrorKind::MismatchedParens)),
+							};
+							BoolOrFloatRvalue::FloatRvalue(FloatRvalue::UnaryOp(op, Box::new(x)))
+						}
+					};
+					self.operands.push(result);
+					self.expecting = make_bitflags!(Expecting::{Operator});
+					self.cursor = new_cursor;
+					Ok(true)
+				} else { Ok(false) }
+			}
+			
+			#[trace]
+			fn try_float_rvalue(&mut self) -> MegaResult<bool> {
+				let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+				let rvalue = match yeet!(name.graphemes(true).next(), Ok(false)) {
+					"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => match name.parse() {
+						Ok(literal) => FloatRvalue::Literal(literal),
+						Err(..) => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatLiteral)),
+					}
+					_ => match name {
+						"atunci"|"executa"|"execută"
+							=> return Err(self.cursor.make_error(LineParsingErrorKind::InvalidLvalueName)),
+						_ => FloatRvalue::Lvalue(Lvalue(name)),
+					}
+				};
+				
+				self.operands.push(BoolOrFloatRvalue::FloatRvalue(rvalue));
+				self.expecting = make_bitflags!(Expecting::{Operator});
+				self.cursor = new_cursor;
+				Ok(true)
+			}
+			
+			#[trace]
+			fn eval_top_operation(&mut self) {
+				let op = self.operators.pop().unwrap();
+				let result = match op {
+					Operator::ParenUnaryOp(..) => panic!(),
+					Operator::PrefixUnaryOp(op) => {
+						let x = self.operands.pop().unwrap();
+						match op {
+							// the operation will always be Ident, so we just ignore it
+							BoolOrFloatUnaryOp::BoolUnaryOp(..) => x,
+							BoolOrFloatUnaryOp::FloatUnaryOp(op) => match x {
+								BoolOrFloatRvalue::FloatRvalue(x)
+									=> BoolOrFloatRvalue::FloatRvalue(FloatRvalue::UnaryOp(op, Box::new(x))),
+								_ => panic!(),
+							}
+						}
+					}
+					Operator::BinaryOp(op) => {
+						let y = self.operands.pop().unwrap();
+						let x = self.operands.pop().unwrap();
+						match op {
+							BoolOrFloatBinaryOp::FloatBinaryOp(op) => match (x, y) {
+								(BoolOrFloatRvalue::FloatRvalue(x), BoolOrFloatRvalue::FloatRvalue(y))
+									=> BoolOrFloatRvalue::FloatRvalue(FloatRvalue::BinaryOp(op, Box::new(x), Box::new(y))),
+								_ => panic!(),
+							}
+							BoolOrFloatBinaryOp::BoolBinaryOp(op) => match op {
+								BoolBinaryOp::BoolFloatBinaryOp(op) => match (x, y) {
+									(BoolOrFloatRvalue::FloatRvalue(x), BoolOrFloatRvalue::FloatRvalue(y))
+										=> BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolFloatBinaryOp(op, x, y)),
+									_ => panic!(),
+								}
+								BoolBinaryOp::BoolBoolBinaryOp(op) => match (x, y) {
+									(BoolOrFloatRvalue::BoolRvalue(x), BoolOrFloatRvalue::BoolRvalue(y))
+										=> BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolBoolBinaryOp(op, Box::new(x), Box::new(y))),
+									_ => panic!(),
+								}
+							}
+						}
+					}
+				};
+				self.operands.push(result);
+			}
+			
+			#[trace]
+			fn eval_while_priority_greater_or_equal(&mut self, priority: u32) {
+				while self.operators.last().map_or(false, |last| priority <= get_priority(last)) {
+					self.eval_top_operation();
+				}
+			}
+			
+			#[trace]
+			fn try_float_binary_op(&mut self) -> bool {
+				let (new_cursor, grapheme_0) = yeet!(self.cursor.read_one(), false);
+				let op = match grapheme_0 {
+					"+" => FloatBinaryOp::Add,
+					"-" => FloatBinaryOp::Sub,
+					"*" => FloatBinaryOp::Mul,
+					"/" => FloatBinaryOp::Div,
+					"%" => FloatBinaryOp::Rem,
+					_ => return false,
+				};
+				
+				let op = Operator::BinaryOp(BoolOrFloatBinaryOp::FloatBinaryOp(op));
+				self.eval_while_priority_greater_or_equal(get_priority(&op));
+				self.operators.push(op);
+				self.expecting = make_bitflags!(Expecting::{PrefixUnaryOp | Rvalue});
+				self.cursor = new_cursor;
+				true
+			}
+			
+			#[trace]
+			fn try_bool_float_binary_op(&mut self) -> bool {
+				let (new_cursor, grapheme_0) = yeet!(self.cursor.read_one(), false);
+				let (new_cursor, op) = match grapheme_0 {
+					"=" => (new_cursor, BoolFloatBinaryOp::Eq),
+					
+					"!" => if let Some((new_cursor, "=")) = new_cursor.read_one() {
+						(new_cursor, BoolFloatBinaryOp::Neq)
+					} else { return false }
+					
+					"<" => if let Some((new_cursor, "=")) = new_cursor.read_one() {
+						(new_cursor, BoolFloatBinaryOp::Gte)
+					} else { (new_cursor, BoolFloatBinaryOp::Gt) }
+					
+					">" => if let Some((new_cursor, "=")) = new_cursor.read_one() {
+						(new_cursor, BoolFloatBinaryOp::Lte)
+					} else { (new_cursor, BoolFloatBinaryOp::Lt) }
+					
+					"|" => (new_cursor, BoolFloatBinaryOp::Divides),
+					
+					_ => return false,
+				};
+				
+				let op = Operator::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolFloatBinaryOp(op)));
+				self.eval_while_priority_greater_or_equal(get_priority(&op));
+				self.operators.push(op);
+				self.expecting = make_bitflags!(Expecting::{PrefixUnaryOp | Rvalue});
+				self.cursor = new_cursor;
+				true
+			}
+			
+			#[trace]
+			fn try_bool_bool_binary_op(&mut self) -> bool {
+				let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+				let op = match name {
+					"sau" => BoolBoolBinaryOp::And,
+					"si"|"și" => BoolBoolBinaryOp::Or,
+					_ => return false,
+				};
+				
+				let op = Operator::BinaryOp(BoolOrFloatBinaryOp::BoolBinaryOp(BoolBinaryOp::BoolBoolBinaryOp(op)));
+				self.eval_while_priority_greater_or_equal(get_priority(&op));
+				self.operators.push(op);
+				self.expecting = make_bitflags!(Expecting::{PrefixUnaryOp | Rvalue});
+				self.cursor = new_cursor;
+				true
+			}
+			
+			#[trace]
+			fn mega(&mut self) -> MegaResult<bool> {
+				self.cursor = self.cursor.skip_spaces();
+				dbg!(self.cursor.code());
+				
+				Ok(    (self.expecting.contains(Expecting::PrefixUnaryOp) && self.try_prefix_float_unary_op())
+					|| (self.expecting.contains(Expecting::Rvalue) && self.try_lparen_unary_op())
+					|| (self.expecting.contains(Expecting::Operator) && self.try_rparen_unary_op()?)
+					|| (self.expecting.contains(Expecting::Operator) && (
+						   self.try_float_binary_op()
+						|| self.try_bool_float_binary_op()
+						|| self.try_bool_bool_binary_op() ))
+					|| (self.expecting.contains(Expecting::Rvalue) && self.try_float_rvalue()?)
+				)
+			}
+			
+			#[trace]
+			fn tron(mut self) -> LineParsingIntermediateResult<'a, BoolOrFloatRvalue<'a>> {
+				while self.mega()? {
+					dbg!(&self.operators);
+				}
+				if !self.expecting.contains(Expecting::Operator) {
+					Err(self.cursor.make_error(LineParsingErrorKind::ExpectedMegatron()))
+				} else {
+					while !self.operators.is_empty() {
+						self.eval_top_operation();
+					}
+					let result = self.operands.pop();
+					Ok((self.cursor, result.unwrap()))
+				}
+			}
+		}
+		
+		let megatron = Megatron::new(self);
+		megatron.tron()
 	}
 }

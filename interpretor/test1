@@ -3,6 +3,8 @@ b <- 5
 a <->b
 scrie a+b*(2+3)
 scrie a+(b+1)*3+((2+1)*2+1)
+scrie (a+2)
+scrie +(a+2)
 scrie a, b
 daca a < b atunci
 	scrie 1
@@ -11,3 +13,4 @@ daca a < b atunci
 daca a+b = 15 atunci
 	scrie 3
 
+daca (a=10 si b=15) sau ((a+2)=12 si b=13)

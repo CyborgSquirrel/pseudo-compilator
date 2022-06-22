@@ -164,54 +164,59 @@ impl parse::ParsingError {
 					format!("aici ar fi trebuit să apară o condiție."),
 				ExpectedNonrecursiveInstruction =>
 					format!("aici ar fi trebuit să apară o atribuire, interschimbare, sau o instrucțiune de tip scrie sau citește."),
-				TokenParsingError(err) => {
-					use parse::expression::TokenParsingError::*;
-					match err {
-						InvalidFloatLiteral(literal) =>
-							format!("`{}` nu este un număr valid.", literal),
-						InvalidOperator(operator) =>
-							format!("`{}` nu este un operator valid.", operator),
-					}
-				}
-				ExpressionConstructionError(err) => {
-					use parse::expression::ExpressionConstructionError::*;
-					match err {
-						MismatchedParens =>
-							format!("parantezele nu se potrivesc."),
-						UnclosedRparen =>
-							format!("parantezei închise nu i se potrivește o paranteză deschisă."),
-						UnclosedLparen =>
-							format!("parantezei deschise nu i se potrivește o paranteză închisă."),
-						MissingOperand =>
-							format!("aici ar trebui să apară un operand."),
-						InvalidUnaryOpOperands(op) => {
-							use parse::expression::BoolOrFloatUnaryOp;
-							match op {
-								BoolOrFloatUnaryOp::BoolUnaryOp(..) =>
-									panic!(),
-								BoolOrFloatUnaryOp::FloatUnaryOp(op) =>
-									format!("operația `{}` poate fi efectuată doar pe o expresie.", op.get_str()),
-							}
-						}
-						InvalidBinaryOpOperands(op) => {
-							use parse::expression::BoolOrFloatBinaryOp;
-							use syntax::BoolBinaryOp;
-							match op {
-								BoolOrFloatBinaryOp::BoolBinaryOp(op) =>
-									match op {
-										BoolBinaryOp::BoolBoolBinaryOp(op) =>
-											format!("operația `{}` poate fi efectuată doar pe două condiții.", op.get_str()),
-										BoolBinaryOp::BoolFloatBinaryOp(op) =>
-											format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
-									}
-								BoolOrFloatBinaryOp::FloatBinaryOp(op) =>
-									format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
-							}
-						}
-						ExpectationError(expected) =>
-							format!("{:?}", expected),
-					}
-				}
+				// TokenParsingError(err) => {
+				// 	use parse::expression::TokenParsingError::*;
+				// 	match err {
+				// 		InvalidFloatLiteral(literal) =>
+				// 			format!("`{}` nu este un număr valid.", literal),
+				// 		InvalidOperator(operator) =>
+				// 			format!("`{}` nu este un operator valid.", operator),
+				// 	}
+				// }
+				// ExpressionConstructionError(err) => {
+				// 	use parse::expression::ExpressionConstructionError::*;
+				// 	match err {
+				// 		MismatchedParens =>
+				// 			format!("parantezele nu se potrivesc."),
+				// 		UnclosedRparen =>
+				// 			format!("parantezei închise nu i se potrivește o paranteză deschisă."),
+				// 		UnclosedLparen =>
+				// 			format!("parantezei deschise nu i se potrivește o paranteză închisă."),
+				// 		MissingOperand =>
+				// 			format!("aici ar trebui să apară un operand."),
+				// 		InvalidUnaryOpOperands(op) => {
+				// 			use parse::expression::BoolOrFloatUnaryOp;
+				// 			match op {
+				// 				BoolOrFloatUnaryOp::BoolUnaryOp(..) =>
+				// 					panic!(),
+				// 				BoolOrFloatUnaryOp::FloatUnaryOp(op) =>
+				// 					format!("operația `{}` poate fi efectuată doar pe o expresie.", op.get_str()),
+				// 			}
+				// 		}
+				// 		InvalidBinaryOpOperands(op) => {
+				// 			use parse::expression::BoolOrFloatBinaryOp;
+				// 			use syntax::BoolBinaryOp;
+				// 			match op {
+				// 				BoolOrFloatBinaryOp::BoolBinaryOp(op) =>
+				// 					match op {
+				// 						BoolBinaryOp::BoolBoolBinaryOp(op) =>
+				// 							format!("operația `{}` poate fi efectuată doar pe două condiții.", op.get_str()),
+				// 						BoolBinaryOp::BoolFloatBinaryOp(op) =>
+				// 							format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
+				// 					}
+				// 				BoolOrFloatBinaryOp::FloatBinaryOp(op) =>
+				// 					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
+				// 			}
+				// 		}
+				// 		ExpectationError(expected) =>
+				// 			format!("{:?}", expected),
+				// 	}
+				// }
+				ExpectedUnaryOpOrParenOrRvalue => todo!(),
+				ExpectedMegatron(..) => todo!(),
+				MismatchedParens => todo!(),
+				InvalidLvalueName => todo!(),
+				InvalidFloatLiteral => todo!(),
 			},
 		})
 	}

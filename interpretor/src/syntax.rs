@@ -81,18 +81,18 @@ pub enum BoolRvalue<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BoolUnaryOp { }
+pub enum BoolUnaryOp { Ident }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BoolFloatBinaryOp {
-	Equ, Nequ, Lt, Gt, Lte, Gte,
+	Eq, Neq, Lt, Gt, Lte, Gte,
 	Divides,
 }
 impl BoolFloatBinaryOp {
 	pub fn evaluate(&self, x: f32, y: f32) -> bool {
 		match self {
-			BoolFloatBinaryOp::Equ     => (x - y).abs() <= EPSILON,
-			BoolFloatBinaryOp::Nequ    => (x - y).abs() > EPSILON,
+			BoolFloatBinaryOp::Eq      => (x - y).abs() <= EPSILON,
+			BoolFloatBinaryOp::Neq     => (x - y).abs() > EPSILON,
 			BoolFloatBinaryOp::Lt      => x < y,
 			BoolFloatBinaryOp::Gt      => x > y,
 			BoolFloatBinaryOp::Lte     => x <= y,
@@ -102,8 +102,8 @@ impl BoolFloatBinaryOp {
 	}
 	pub fn get_str(&self) -> &'static str {
 		match self {
-			BoolFloatBinaryOp::Equ     => "=",
-			BoolFloatBinaryOp::Nequ    => "!=",
+			BoolFloatBinaryOp::Eq      => "=",
+			BoolFloatBinaryOp::Neq     => "!=",
 			BoolFloatBinaryOp::Lt      => "<",
 			BoolFloatBinaryOp::Gt      => ">",
 			BoolFloatBinaryOp::Lte     => "<=",

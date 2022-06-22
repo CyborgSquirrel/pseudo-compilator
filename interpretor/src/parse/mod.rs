@@ -41,8 +41,17 @@ pub enum LineParsingErrorKind {
 	ExpectedFloatRvalue,
 	ExpectedBoolRvalue,
 	ExpectedNonrecursiveInstruction,
-	TokenParsingError(TokenParsingError),
-	ExpressionConstructionError(ExpressionConstructionError<BoolOrFloatUnaryOp, BoolOrFloatBinaryOp>),
+	
+	ExpectedUnaryOpOrParenOrRvalue,
+	ExpectedMegatron(),
+	MismatchedParens,
+	InvalidLvalueName,
+	InvalidFloatLiteral,
+	
+	// InvalidFloatUnaryOpOperands,
+	// InvalidFloatBinaryOpOperands,
+	// InvalidBoolFloatBinaryOpOperands,
+	// InvalidBoolBoolBinaryOpOperands,
 }
 
 #[derive(Debug)]
@@ -60,9 +69,15 @@ impl<'a> LineCursor<'a> {
 	fn new(code: &'a str) -> Self {
 		Self { code, index: 0, grapheme: 0 }
 	}
+	fn ok<T>(self, result: T) -> LineParsingResult<(Self, T)> {
+		Ok((self, result))
+	}
 	fn make_error<T: Into<LineParsingErrorKind>>(&self, kind: T) -> LineParsingError {
 		LineParsingError(self.grapheme, kind.into())
 	}
+	// fn make_error<T: Into<LineParsingErrorKind>, U>(&self, kind: T) -> LineParsingResult<(Self, U)> {
+	// 	Err(LineParsingError(self.grapheme, kind.into()))
+	// }
 	fn code(&self) -> &'a str {
 		&self.code[self.index..]
 	}
@@ -127,7 +142,7 @@ impl<'a> LineCursor<'a> {
 		let (graphemes, offset) =
 			self.code().grapheme_indices(true)
 				.map(|(i, x)| { (i, Some(x)) })
-				.chain(std::iter::once((self.code.len(), None)))
+				.chain(std::iter::once((self.code().len(), None)))
 			.enumerate()
 				.skip_while(|(_, (_, x))| { x.map_or(false, &mut predicate) })
 				.next()
@@ -137,6 +152,14 @@ impl<'a> LineCursor<'a> {
 		self.grapheme += graphemes;
 		self.index += offset;
 		(self, result)
+	}
+	fn read_one(mut self) -> Option<(Self, &'a str)> {
+		let one = self.code().grapheme_indices(true).next();
+		if let Some((_, one)) = one {
+			self.grapheme += 1;
+			self.index += one.len();
+			Some((self, one))
+		} else { None }
 	}
 	fn parse_lvalue(self) -> LineParsingIntermediateResult<'a, Lvalue<'a>> {
 		let (new_self, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
@@ -500,9 +523,6 @@ mod tests {
 		parse, 
 		ParsingError, ParsingErrorKind::*,
 		LineParsingErrorKind::*,
-		Expecting::*,
-		ExpressionConstructionError::*,
-		TokenParsingError::*,
 	};
 	
 	// expressions
@@ -511,9 +531,7 @@ mod tests {
 		ParsingError(
 			1, 15,
 			LineParsingError(
-				ExpressionConstructionError(
-					ExpectationError(
-						OperandOrUnaryOperator)))),
+				ExpectedMegatron())),
 		r#"scrie   4141+  "#
 	}
 	
@@ -522,9 +540,7 @@ mod tests {
 		ParsingError(
 			1, 16,
 			LineParsingError(
-				ExpressionConstructionError(
-					ExpectationError(
-						Operand)))),
+				ExpectedMegatron())),
 		r#"scrie   4141+-  "#
 	}
 	
@@ -533,8 +549,7 @@ mod tests {
 		ParsingError(
 			1, 10,
 			LineParsingError(
-				ExpressionConstructionError(
-					MismatchedParens))),
+				MismatchedParens)),
 		r#"scrie [1+2)"#
 	}
 	
@@ -543,10 +558,19 @@ mod tests {
 		ParsingError(
 			1, 7,
 			LineParsingError(
-				ExpressionConstructionError(
-					ExpectationError(
-						Operand)))),
+				ExpectedMegatron())),
 		r#"scrie ++41+1"#
+	}
+	
+	test_parsing_error! {
+		idk,
+		ParsingError(
+			1, 17,
+			LineParsingError(ExpectedNonrecursiveInstruction)),
+		r#"
+			daca +(1=2 sau 3<5 si 4=4) atunci
+				scrie "ok"
+		"#
 	}
 	
 	// #[test]
@@ -656,7 +680,7 @@ mod tests {
 	}
 	
 	test_parsing_error! {
-		weird,
+		recursive_instruction_after_nonrecursive_instruction,
 		ParsingError(
 			1, 17,
 			LineParsingError(ExpectedNonrecursiveInstruction)),

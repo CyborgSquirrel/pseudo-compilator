@@ -7,7 +7,7 @@ use expression::*;
 use crate::syntax::{
 	Instructiune,
 	ScrieParam,
-	Lvalue,
+	Lvalue, FloatUnaryOp, FloatBinaryOp, BoolFloatBinaryOp, BoolBoolBinaryOp,
 };
 use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
@@ -43,15 +43,15 @@ pub enum LineParsingErrorKind {
 	ExpectedNonrecursiveInstruction,
 	
 	ExpectedUnaryOpOrParenOrRvalue,
-	ExpectedMegatron(),
+	ExpectedMegatron(expression::ExpectingFlags),
 	MismatchedParens,
 	InvalidLvalueName,
 	InvalidFloatLiteral,
 	
-	// InvalidFloatUnaryOpOperands,
-	// InvalidFloatBinaryOpOperands,
-	// InvalidBoolFloatBinaryOpOperands,
-	// InvalidBoolBoolBinaryOpOperands,
+	InvalidFloatUnaryOpOperands(FloatUnaryOp),
+	InvalidFloatBinaryOpOperands(FloatBinaryOp),
+	InvalidBoolFloatBinaryOpOperands(BoolFloatBinaryOp),
+	InvalidBoolBoolBinaryOpOperands(BoolBoolBinaryOp),
 }
 
 #[derive(Debug)]
@@ -125,17 +125,17 @@ impl<'a> LineCursor<'a> {
 		Ok((self, ()))
 	}
 	fn skip_spaces(mut self) -> Self {
-		let code = self.code();
-		if !code.is_empty() {
-			let mut graphemes = 0;
-			let offset = code.grapheme_indices(true)
-				.find(|(_, x)| { graphemes += 1; *x != " "})
-				.map(|(i, _)| i)
-				.unwrap_or(code.len());
-			graphemes -= 1;
-			self.grapheme += graphemes;
-			self.index += offset;
-		}
+		let (graphemes, offset) =
+			self.code().grapheme_indices(true)
+				.map(|(i, x)| { (i, Some(x)) })
+				.chain(std::iter::once((self.code().len(), None)))
+			.enumerate()
+				.skip_while(|(_, (_, x))| { x.map_or(false, |x| x == " ") })
+				.next()
+				.map(|(g, (i, _))| { (g, i) })
+			.unwrap(); // this unwrap shouldn't ever fail
+		self.grapheme += graphemes;
+		self.index += offset;
 		self
 	}
 	fn read_while<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> (Self, &'a str) {
@@ -502,6 +502,7 @@ pub fn parse<'a>(code: &'a str) -> ParsingResult<Vec<Instructiune<'a>>> {
 
 #[cfg(test)]
 mod tests {
+	use enumflags2::make_bitflags;
 	use indoc::indoc;
 	
 	macro_rules! assert_parsing_error {
@@ -523,6 +524,7 @@ mod tests {
 		parse, 
 		ParsingError, ParsingErrorKind::*,
 		LineParsingErrorKind::*,
+		expression::Expecting,
 	};
 	
 	// expressions
@@ -531,7 +533,8 @@ mod tests {
 		ParsingError(
 			1, 15,
 			LineParsingError(
-				ExpectedMegatron())),
+				ExpectedMegatron(
+					make_bitflags!(Expecting::{PrefixUnaryOp | Rvalue})))),
 		r#"scrie   4141+  "#
 	}
 	
@@ -540,7 +543,8 @@ mod tests {
 		ParsingError(
 			1, 16,
 			LineParsingError(
-				ExpectedMegatron())),
+				ExpectedMegatron(
+					make_bitflags!(Expecting::{Rvalue})))),
 		r#"scrie   4141+-  "#
 	}
 	
@@ -558,32 +562,31 @@ mod tests {
 		ParsingError(
 			1, 7,
 			LineParsingError(
-				ExpectedMegatron())),
+				ExpectedMegatron(
+					make_bitflags!(Expecting::{Rvalue})))),
 		r#"scrie ++41+1"#
 	}
 	
 	test_parsing_error! {
-		idk,
+		invalid_float_unop_operands_fixme,
 		ParsingError(
 			1, 17,
-			LineParsingError(ExpectedNonrecursiveInstruction)),
+			LineParsingError(
+				ExpectedNonrecursiveInstruction)),
 		r#"
 			daca +(1=2 sau 3<5 si 4=4) atunci
 				scrie "ok"
 		"#
 	}
 	
-	// #[test]
-	// fn invalid_float_literal() {
-	// 	assert_parsing_error! {
-	// 		r#"a<-41yeet41"#,
-	// 		ParsingError(
-	// 			1, 4,
-	// 			LineParsingError(
-	// 				TokenParsingError(
-	// 					InvalidFloatLiteral)))
-	// 	}
-	// }
+	test_parsing_error! {
+		invalid_float_literal_fixme,
+		ParsingError(
+			1, 4,
+			LineParsingError(
+				InvalidFloatLiteral)),
+		r#"a<-41yeet41"#
+	}
 	
 	// other stuff
 	test_parsing_error! {

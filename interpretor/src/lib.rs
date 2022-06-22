@@ -217,6 +217,15 @@ impl parse::ParsingError {
 				MismatchedParens => todo!(),
 				InvalidLvalueName => todo!(),
 				InvalidFloatLiteral => todo!(),
+				
+				InvalidFloatUnaryOpOperands(op) =>
+					format!("operația `{}` poate fi efectuată doar pe o expresie.", op.get_str()),
+				InvalidFloatBinaryOpOperands(op) =>
+					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
+				InvalidBoolFloatBinaryOpOperands(op) =>
+					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
+				InvalidBoolBoolBinaryOpOperands(op) =>
+					format!("operația `{}` poate fi efectuată doar pe două condiții.", op.get_str()),
 			},
 		})
 	}

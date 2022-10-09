@@ -212,19 +212,20 @@ impl parse::ParsingError {
 				// 			format!("{:?}", expected),
 				// 	}
 				// }
-				ExpectedUnaryOpOrParenOrRvalue => todo!(),
 				ExpectedMegatron(..) => todo!(),
 				MismatchedParens => todo!(),
+				UnclosedLParen => todo!(),
+				UnclosedRParen => todo!(),
 				InvalidLvalueName => todo!(),
 				InvalidFloatLiteral => todo!(),
 				
-				InvalidFloatUnaryOpOperands(op) =>
+				InvalidFloatUnopOperands(op) =>
 					format!("operația `{}` poate fi efectuată doar pe o expresie.", op.get_str()),
-				InvalidFloatBinaryOpOperands(op) =>
+				InvalidFloatBinopOperands(op) =>
 					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
-				InvalidBoolFloatBinaryOpOperands(op) =>
+				InvalidBoolFloatBinopOperands(op) =>
 					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
-				InvalidBoolBoolBinaryOpOperands(op) =>
+				InvalidBoolBoolBinopOperands(op) =>
 					format!("operația `{}` poate fi efectuată doar pe două condiții.", op.get_str()),
 			},
 		})

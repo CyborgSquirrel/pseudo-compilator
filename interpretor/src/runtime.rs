@@ -18,11 +18,11 @@ fn float_evaluate<'a>(
 	match rvalue {
 		FloatRvalue::Literal(x) => Ok(*x),
 		FloatRvalue::Lvalue(x) => variables.get(x.0).cloned(),
-		FloatRvalue::UnaryOp(op, x) => {
+		FloatRvalue::Unop(op, x) => {
 			let x = float_evaluate(variables, x)?;
 			Ok(op.evaluate(x))
 		}
-		FloatRvalue::BinaryOp(op, x, y) => {
+		FloatRvalue::Binop(op, x, y) => {
 			let x = float_evaluate(variables, x)?;
 			let y = float_evaluate(variables, y)?;
 			Ok(op.evaluate(x, y))
@@ -35,12 +35,12 @@ fn bool_evaluate<'a>(
 	rvalue: &BoolRvalue<'a>,
 ) -> RuntimeResult<bool> {
 	match rvalue {
-		BoolRvalue::BoolBoolBinaryOp(op, x, y) => {
+		BoolRvalue::BoolBoolBinop(op, x, y) => {
 			let x = bool_evaluate(variables, x)?;
 			let y = bool_evaluate(variables, y)?;
 			Ok(op.evaluate(x, y))
 		}
-		BoolRvalue::BoolFloatBinaryOp(op, x, y) => {
+		BoolRvalue::BoolFloatBinop(op, x, y) => {
 			let x = float_evaluate(variables, x)?;
 			let y = float_evaluate(variables, y)?;
 			Ok(op.evaluate(x, y))

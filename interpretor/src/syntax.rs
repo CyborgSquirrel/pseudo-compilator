@@ -27,48 +27,48 @@ pub struct Lvalue<'a> (pub &'a str);
 pub enum FloatRvalue<'a> {
 	Literal(f32),
 	Lvalue(Lvalue<'a>),
-	UnaryOp(FloatUnaryOp, Box<FloatRvalue<'a>>),
-	BinaryOp(FloatBinaryOp, Box<FloatRvalue<'a>>, Box<FloatRvalue<'a>>),
+	Unop(FloatUnop, Box<FloatRvalue<'a>>),
+	Binop(FloatBinop, Box<FloatRvalue<'a>>, Box<FloatRvalue<'a>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum FloatUnaryOp { Ident, Neg, Whole }
-impl FloatUnaryOp {
+pub enum FloatUnop { Ident, Neg, Whole }
+impl FloatUnop {
 	pub fn evaluate(&self, x: f32) -> f32 {
 		match self {
-			FloatUnaryOp::Ident => x,
-			FloatUnaryOp::Neg   => -x,
-			FloatUnaryOp::Whole => x.floor(),
+			FloatUnop::Ident => x,
+			FloatUnop::Neg   => -x,
+			FloatUnop::Whole => x.floor(),
 		}
 	}
 	pub fn get_str(&self) -> &'static str {
 		match self {
-			FloatUnaryOp::Ident => "+",
-			FloatUnaryOp::Neg   => "-",
-			FloatUnaryOp::Whole => "[...]",
+			FloatUnop::Ident => "+",
+			FloatUnop::Neg   => "-",
+			FloatUnop::Whole => "[...]",
 		}
 	}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum FloatBinaryOp { Add, Sub, Mul, Div, Rem }
-impl FloatBinaryOp {
+pub enum FloatBinop { Add, Sub, Mul, Div, Rem }
+impl FloatBinop {
 	pub fn evaluate(&self, x: f32, y: f32) -> f32 {
 		match &self {
-			FloatBinaryOp::Add => x + y,
-			FloatBinaryOp::Sub => x - y,
-			FloatBinaryOp::Mul => x * y,
-			FloatBinaryOp::Div => x / y,
-			FloatBinaryOp::Rem => ((x as i32) % (y as i32)) as f32,
+			FloatBinop::Add => x + y,
+			FloatBinop::Sub => x - y,
+			FloatBinop::Mul => x * y,
+			FloatBinop::Div => x / y,
+			FloatBinop::Rem => ((x as i32) % (y as i32)) as f32,
 		}
 	}
 	pub fn get_str(&self) -> &'static str {
 		match &self {
-			FloatBinaryOp::Add => "+",
-			FloatBinaryOp::Sub => "-",
-			FloatBinaryOp::Mul => "*",
-			FloatBinaryOp::Div => "/",
-			FloatBinaryOp::Rem => "%",
+			FloatBinop::Add => "+",
+			FloatBinop::Sub => "-",
+			FloatBinop::Mul => "*",
+			FloatBinop::Div => "/",
+			FloatBinop::Rem => "%",
 		}
 	}
 }
@@ -76,65 +76,65 @@ impl FloatBinaryOp {
 // bool stuff
 #[derive(Debug)]
 pub enum BoolRvalue<'a> {
-	BoolFloatBinaryOp(BoolFloatBinaryOp, FloatRvalue<'a>, FloatRvalue<'a>),
-	BoolBoolBinaryOp(BoolBoolBinaryOp, Box<BoolRvalue<'a>>, Box<BoolRvalue<'a>>),
+	BoolFloatBinop(BoolFloatBinop, FloatRvalue<'a>, FloatRvalue<'a>),
+	BoolBoolBinop(BoolBoolBinop, Box<BoolRvalue<'a>>, Box<BoolRvalue<'a>>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BoolUnaryOp { Ident }
+pub enum BoolUnop { Ident }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BoolFloatBinaryOp {
+pub enum BoolFloatBinop {
 	Eq, Neq, Lt, Gt, Lte, Gte,
 	Divides,
 }
-impl BoolFloatBinaryOp {
+impl BoolFloatBinop {
 	pub fn evaluate(&self, x: f32, y: f32) -> bool {
 		match self {
-			BoolFloatBinaryOp::Eq      => (x - y).abs() <= EPSILON,
-			BoolFloatBinaryOp::Neq     => (x - y).abs() > EPSILON,
-			BoolFloatBinaryOp::Lt      => x < y,
-			BoolFloatBinaryOp::Gt      => x > y,
-			BoolFloatBinaryOp::Lte     => x <= y,
-			BoolFloatBinaryOp::Gte     => x >= y,
-			BoolFloatBinaryOp::Divides => (y as i32) % (x as i32) == 0,
+			BoolFloatBinop::Eq      => (x - y).abs() <= EPSILON,
+			BoolFloatBinop::Neq     => (x - y).abs() > EPSILON,
+			BoolFloatBinop::Lt      => x < y,
+			BoolFloatBinop::Gt      => x > y,
+			BoolFloatBinop::Lte     => x <= y,
+			BoolFloatBinop::Gte     => x >= y,
+			BoolFloatBinop::Divides => (y as i32) % (x as i32) == 0,
 		}
 	}
 	pub fn get_str(&self) -> &'static str {
 		match self {
-			BoolFloatBinaryOp::Eq      => "=",
-			BoolFloatBinaryOp::Neq     => "!=",
-			BoolFloatBinaryOp::Lt      => "<",
-			BoolFloatBinaryOp::Gt      => ">",
-			BoolFloatBinaryOp::Lte     => "<=",
-			BoolFloatBinaryOp::Gte     => ">=",
-			BoolFloatBinaryOp::Divides => "|",
+			BoolFloatBinop::Eq      => "=",
+			BoolFloatBinop::Neq     => "!=",
+			BoolFloatBinop::Lt      => "<",
+			BoolFloatBinop::Gt      => ">",
+			BoolFloatBinop::Lte     => "<=",
+			BoolFloatBinop::Gte     => ">=",
+			BoolFloatBinop::Divides => "|",
 		}
 	}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BoolBoolBinaryOp {
+pub enum BoolBoolBinop {
 	And, Or,
 }
-impl BoolBoolBinaryOp{
+impl BoolBoolBinop{
 	pub fn evaluate(&self, x: bool, y: bool) -> bool {
 		match self {
-			BoolBoolBinaryOp::And => x && y,
-			BoolBoolBinaryOp::Or  => x || y,
+			BoolBoolBinop::And => x && y,
+			BoolBoolBinop::Or  => x || y,
 		}
 	}
 	pub fn get_str(&self) -> &'static str {
 		match self {
-			BoolBoolBinaryOp::And => "și",
-			BoolBoolBinaryOp::Or  => "sau",
+			BoolBoolBinop::And => "și",
+			BoolBoolBinop::Or  => "sau",
 		}
 	}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BoolBinaryOp {
-	BoolFloatBinaryOp(BoolFloatBinaryOp),
-	BoolBoolBinaryOp(BoolBoolBinaryOp),
+pub enum BoolBinop {
+	BoolFloatBinop(BoolFloatBinop),
+	BoolBoolBinop(BoolBoolBinop),
 }
 

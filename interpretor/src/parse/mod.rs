@@ -7,8 +7,7 @@ use expression::*;
 use crate::syntax::{
 	Instructiune,
 	ScrieParam,
-	Lvalue, FloatUnaryOp, FloatBinaryOp, BoolFloatBinaryOp, BoolBoolBinaryOp,
-};
+	Lvalue, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop};
 use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -42,16 +41,17 @@ pub enum LineParsingErrorKind {
 	ExpectedBoolRvalue,
 	ExpectedNonrecursiveInstruction,
 	
-	ExpectedUnaryOpOrParenOrRvalue,
 	ExpectedMegatron(expression::ExpectingFlags),
 	MismatchedParens,
+	UnclosedLParen,
+	UnclosedRParen,
 	InvalidLvalueName,
 	InvalidFloatLiteral,
 	
-	InvalidFloatUnaryOpOperands(FloatUnaryOp),
-	InvalidFloatBinaryOpOperands(FloatBinaryOp),
-	InvalidBoolFloatBinaryOpOperands(BoolFloatBinaryOp),
-	InvalidBoolBoolBinaryOpOperands(BoolBoolBinaryOp),
+	InvalidFloatUnopOperands(FloatUnop),
+	InvalidFloatBinopOperands(FloatBinop),
+	InvalidBoolFloatBinopOperands(BoolFloatBinop),
+	InvalidBoolBoolBinopOperands(BoolBoolBinop),
 }
 
 #[derive(Debug)]
@@ -69,15 +69,9 @@ impl<'a> LineCursor<'a> {
 	fn new(code: &'a str) -> Self {
 		Self { code, index: 0, grapheme: 0 }
 	}
-	fn ok<T>(self, result: T) -> LineParsingResult<(Self, T)> {
-		Ok((self, result))
-	}
 	fn make_error<T: Into<LineParsingErrorKind>>(&self, kind: T) -> LineParsingError {
 		LineParsingError(self.grapheme, kind.into())
 	}
-	// fn make_error<T: Into<LineParsingErrorKind>, U>(&self, kind: T) -> LineParsingResult<(Self, U)> {
-	// 	Err(LineParsingError(self.grapheme, kind.into()))
-	// }
 	fn code(&self) -> &'a str {
 		&self.code[self.index..]
 	}
@@ -332,7 +326,7 @@ impl<'a> LineCursor<'a> {
 		Ok(instructions)
 	}
 	
-	fn parse_first_step(self) -> LineParsingResult<Vec<Instructiune<'a>>> {
+	fn parse(self) -> LineParsingResult<Vec<Instructiune<'a>>> {
 		let (new_self, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
 		match name {
 			"daca"|"dacă" =>
@@ -461,7 +455,7 @@ impl<'a> Cursor<'a> {
 								
 								// everything else
 								else {
-									let mut parsed_instructions = line_cursor.parse_first_step()
+									let mut parsed_instructions = line_cursor.parse()
 										.map_err(|err| self.make_error_from_line(err))?;
 									match &mut parsed_instructions[..] {
 										[ Instructiune::DacaAtunciAltfel(_, instructions, _) ]
@@ -529,12 +523,12 @@ mod tests {
 	
 	// expressions
 	test_parsing_error! {
-		missing_operand_or_unary_operator,
+		missing_operand_or_unop,
 		ParsingError(
 			1, 15,
 			LineParsingError(
 				ExpectedMegatron(
-					make_bitflags!(Expecting::{PrefixUnaryOp | Rvalue})))),
+					make_bitflags!(Expecting::{PrefixUnop | Rvalue})))),
 		r#"scrie   4141+  "#
 	}
 	
@@ -558,13 +552,41 @@ mod tests {
 	}
 	
 	test_parsing_error! {
-		too_many_unary_operators,
+		too_many_unops,
 		ParsingError(
 			1, 7,
 			LineParsingError(
 				ExpectedMegatron(
 					make_bitflags!(Expecting::{Rvalue})))),
 		r#"scrie ++41+1"#
+	}
+	
+	test_parsing_error! {
+		empty_parens,
+		ParsingError(
+			1, 4,
+			LineParsingError(
+				ExpectedMegatron(
+					make_bitflags!(Expecting::{PrefixUnop | Rvalue})))),
+		r#"a<-()"#
+	}
+	
+	test_parsing_error! {
+		unclosed_lparen,
+		ParsingError(
+			1, 7,
+			LineParsingError(
+				UnclosedLParen)),
+		r#"a<-(x+y"#
+	}
+	
+	test_parsing_error! {
+		unclosed_rparen,
+		ParsingError(
+			1, 6,
+			LineParsingError(
+				UnclosedRParen)),
+		r#"a<-x+y)"#
 	}
 	
 	test_parsing_error! {
@@ -680,6 +702,14 @@ mod tests {
 				
 				
 		"#
+	}
+	
+	test_parsing_error! {
+		repeta_without_pana_cand_short,
+		ParsingError(
+			1, 0,
+			RepetaWithoutPanaCand),
+		r#"repeta"#
 	}
 	
 	test_parsing_error! {

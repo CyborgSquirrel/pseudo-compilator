@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use wasm_bindgen::prelude::wasm_bindgen;
 use unicode_segmentation::UnicodeSegmentation;
+
+#[cfg(feature = "wasm")]
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::syntax::{
 	Instructiune,
@@ -87,8 +89,8 @@ enum StackData {
 	CitesteParamIndex(usize),
 }
 
-#[wasm_bindgen]
-#[derive(Debug,PartialEq, Eq)]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RuntimeState {
 	Running,
 	WaitingForInput,

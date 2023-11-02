@@ -302,7 +302,7 @@ impl<'a> LineCursor<'a> {
 		let mut done = false;
 		let mut instructions = Vec::new();
 		while !done {
-			dbg!(self.grapheme);
+			// dbg!(self.grapheme);
 			let (new_self, instruction) = match name {
 				"daca"|"dacă"|"cat"|"cât"|"pentru" =>
 					Err(self.make_error(LineParsingErrorKind::ExpectedNonrecursiveInstruction)),

@@ -109,7 +109,7 @@ impl<'a> Parser<'a> {
 		}
 	}
 	
-	#[trace]
+	// #[trace]
 	fn try_prefix_float_unop(&mut self) -> bool {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), false);
 		let op = match grapheme_0 {
@@ -125,7 +125,7 @@ impl<'a> Parser<'a> {
 		true
 	}
 	
-	#[trace]
+	// #[trace]
 	fn try_lparen_unop(&mut self) -> bool {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), false);
 		let op = match grapheme_0 {
@@ -140,7 +140,7 @@ impl<'a> Parser<'a> {
 		true
 	}
 	
-	#[trace]
+	// #[trace]
 	fn try_rparen_unop(&mut self) -> Result<bool> {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
 		let op = match grapheme_0 {
@@ -181,7 +181,7 @@ impl<'a> Parser<'a> {
 		} else { Err(self.cursor.make_error(LineParsingErrorKind::UnclosedRParen)) }
 	}
 	
-	#[trace]
+	// #[trace]
 	fn try_float_rvalue(&mut self) -> Result<bool> {
 		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
 		let rvalue = match unwrap_or_return!(name.graphemes(true).next(), Ok(false)) {
@@ -202,7 +202,7 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	#[trace]
+	// #[trace]
 	fn eval_top_operation(&mut self) -> Result<()> {
 		let op = self.operators.pop().unwrap();
 		let result = match op {
@@ -247,7 +247,7 @@ impl<'a> Parser<'a> {
 		Ok(())
 	}
 	
-	#[trace]
+	// #[trace]
 	fn eval_while_priority_greater_or_equal(&mut self, priority: u32) -> Result<()> {
 		while self.operators.last().map_or(false, |last| priority <= get_priority(last)) {
 			self.eval_top_operation()?;
@@ -255,7 +255,7 @@ impl<'a> Parser<'a> {
 		Ok(())
 	}
 	
-	#[trace]
+	// #[trace]
 	fn try_float_binop(&mut self) -> Result<bool> {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
 		let op = match grapheme_0 {
@@ -275,7 +275,7 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	#[trace]
+	// #[trace]
 	fn try_bool_float_binop(&mut self) -> Result<bool> {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
 		let (new_cursor, op) = match grapheme_0 {
@@ -286,12 +286,12 @@ impl<'a> Parser<'a> {
 			} else { return Ok(false) }
 			
 			"<" => if let Some((new_cursor, "=")) = new_cursor.read_one() {
-				(new_cursor, BoolFloatBinop::Gte)
-			} else { (new_cursor, BoolFloatBinop::Gt) }
-			
-			">" => if let Some((new_cursor, "=")) = new_cursor.read_one() {
 				(new_cursor, BoolFloatBinop::Lte)
 			} else { (new_cursor, BoolFloatBinop::Lt) }
+			
+			">" => if let Some((new_cursor, "=")) = new_cursor.read_one() {
+				(new_cursor, BoolFloatBinop::Gte)
+			} else { (new_cursor, BoolFloatBinop::Gt) }
 			
 			"|" => (new_cursor, BoolFloatBinop::Divides),
 			
@@ -306,12 +306,12 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	#[trace]
+	// #[trace]
 	fn try_bool_bool_binop(&mut self) -> Result<bool> {
 		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
 		let op = match name {
-			"sau" => BoolBoolBinop::And,
-			"si"|"și" => BoolBoolBinop::Or,
+			"sau" => BoolBoolBinop::Or,
+			"si"|"și" => BoolBoolBinop::And,
 			_ => return Ok(false),
 		};
 		
@@ -323,10 +323,10 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	#[trace]
+	// #[trace]
 	fn parse_expecting(&mut self) -> Result<bool> {
 		self.cursor = self.cursor.skip_spaces();
-		dbg!(self.cursor.code());
+		// dbg!(self.cursor.code());
 		
 		// NOTE: I took advantage of short-circuiting here to make
 		// the code a bit terser (and arguably more understandable).
@@ -341,10 +341,10 @@ impl<'a> Parser<'a> {
 		)
 	}
 	
-	#[trace]
+	// #[trace]
 	fn parse(mut self) -> LineParsingIntermediateResult<'a, BoolOrFloatRvalue<'a>> {
 		while self.parse_expecting()? {
-			dbg!(&self.operators);
+			// dbg!(&self.operators);
 		}
 		if !self.expecting.contains(Expecting::Operator) {
 			Err(self.cursor.make_error(LineParsingErrorKind::ExpectedMegatron(self.expecting)))

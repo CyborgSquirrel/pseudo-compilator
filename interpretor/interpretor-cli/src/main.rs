@@ -17,18 +17,22 @@ fn main() {
 	let mut code = String::new();
 	program_file.read_to_string(&mut code).unwrap();
 	
-	let result = interpretor_core::interpret(
+	let result = interpretor_core::compile(
 		code.as_str(),
-		&mut stdin().lock(),
-		&mut BufWriter::new(stdout()),
 	);
-	match result {
-		Ok(()) => {
-			std::process::exit(0);
-		}
-		Err(err) => {
-			eprintln!("{}", err.make_string());
-			std::process::exit(1);
-		}
-	}
+
+	// let result = interpretor_core::interpret(
+	// 	code.as_str(),
+	// 	&mut stdin().lock(),
+	// 	&mut BufWriter::new(stdout()),
+	// );
+	// match result {
+	// 	Ok(()) => {
+	// 		std::process::exit(0);
+	// 	}
+	// 	Err(err) => {
+	// 		eprintln!("{}", err.make_string());
+	// 		std::process::exit(1);
+	// 	}
+	// }
 }

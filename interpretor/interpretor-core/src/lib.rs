@@ -1,6 +1,7 @@
 mod parse;
 mod runtime;
 mod syntax;
+mod compiler;
 
 pub fn interpret<Reader: std::io::BufRead, Writer: std::io::Write>(
 	code: &str,
@@ -26,6 +27,12 @@ pub fn interpret<Reader: std::io::BufRead, Writer: std::io::Write>(
 			runtime::RuntimeState::Finished => return Ok(()),
 		};
 	}
+}
+pub fn compile(
+	code: &str,
+) {
+	let instructions = parse::parse(code).unwrap();
+	compiler::compile(&instructions);
 }
 
 pub type InterpretingResult = Result<(), InterpretingError>;

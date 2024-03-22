@@ -2,7 +2,8 @@
   description = "A very basic flake";
   
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    # nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-23.11";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
@@ -21,15 +22,21 @@
           ];
         };
       in {
-        devShell = pkgs.mkShell {
+        devShell = pkgs.mkShell rec {
           buildInputs = [
             pkgs.rustc
             # (pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
             pkgs.rust-analyzer
 
             pkgs.cargo
+
+            pkgs.llvmPackages_17.libllvm
+            pkgs.libffi
+            pkgs.libxml2
+
+            pkgs.llvmPackages_17.libcxxClang
           ];
-          # LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
+          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
         };
       }
     );

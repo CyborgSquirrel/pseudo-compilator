@@ -214,6 +214,7 @@ impl<'a, 'b> Runner<'a, 'b> {
 							*variables.get_mut(contor.0)? += increment;
 						}
 						
+						// TODO: Don't recompute stop, only compute it once.
 						let stop = float_evaluate(variables, stop)?;
 						let contor = *variables.get(contor.0)?;
 						if (increment > 0f32 && contor < stop) || (increment < 0f32 && contor > stop) {

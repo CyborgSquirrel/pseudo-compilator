@@ -4,7 +4,7 @@ use itertools::{Itertools, izip};
 
 use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, IntValue}, builder::{Builder, BuilderError}, module::Module, AddressSpace, OptimizationLevel, llvm_sys::LLVMCallConv, basic_block::BasicBlock, FloatPredicate, targets::{InitializationConfig, Target, RelocMode, CodeModel, FileType}, IntPredicate};
 
-use crate::{syntax::{Instructiune, FloatRvalue, FloatUnop, FloatBinop, ScrieParam, Lvalue, BoolRvalue, BoolFloatBinop, BoolBoolBinop}, runtime::EPSILON, parse};
+use crate::{ast::{Instructiune, FloatRvalue, FloatUnop, FloatBinop, ScrieParam, Lvalue, BoolRvalue, BoolFloatBinop, BoolBoolBinop}, runtime::EPSILON, parse};
 
 #[derive(Clone, Copy)]
 struct Variable<'ctx> {

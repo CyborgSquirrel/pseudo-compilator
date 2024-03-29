@@ -4,7 +4,7 @@ use unicode_segmentation::UnicodeSegmentation;
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use crate::syntax::{
+use crate::ast::{
 	Instructiune,
 	ScrieParam,
 	FloatRvalue, BoolRvalue,

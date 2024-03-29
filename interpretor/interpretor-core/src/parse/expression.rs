@@ -5,7 +5,7 @@ trace::init_depth_var!();
 
 use unicode_segmentation::UnicodeSegmentation;
 use super::{LineCursor, LineParsingIntermediateResult, LineParsingErrorKind, get_grapheme_kind, GraphemeKind};
-use crate::{syntax::{
+use crate::{ast::{
 	Lvalue,
 	FloatUnop, FloatBinop, BoolBinop, FloatRvalue, BoolRvalue, BoolUnop, BoolBoolBinop, BoolFloatBinop
 }, parse::LineParsingError};

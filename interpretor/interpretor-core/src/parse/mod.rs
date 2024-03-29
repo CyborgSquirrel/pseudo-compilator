@@ -4,7 +4,7 @@ use trace::{trace, init_depth_var};
 init_depth_var!();
 
 use expression::*;
-use crate::syntax::{
+use crate::ast::{
 	Instructiune,
 	ScrieParam,
 	Lvalue, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop};

@@ -1,6 +1,6 @@
 mod parse;
 mod runtime;
-mod syntax;
+mod ast;
 mod compiler;
 
 pub use compiler::Compiler;

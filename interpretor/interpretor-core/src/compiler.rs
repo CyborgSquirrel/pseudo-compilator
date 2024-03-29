@@ -1,26 +1,10 @@
-use std::collections::{HashSet, HashMap};
+use std::{collections::HashMap, path::Path, process::Command};
 
-use itertools::{intersperse, Itertools, izip};
+use itertools::{Itertools, izip};
 
-use inkwell::{context::{Context, self}, values::{FloatValue, FunctionValue, BasicValue, PointerValue, self, IntValue}, builder::{Builder, BuilderError}, module::Module, AddressSpace, types::AnyType, OptimizationLevel, llvm_sys::LLVMCallConv, basic_block::BasicBlock, FloatPredicate};
+use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, IntValue}, builder::{Builder, BuilderError}, module::Module, AddressSpace, OptimizationLevel, llvm_sys::LLVMCallConv, basic_block::BasicBlock, FloatPredicate, targets::{InitializationConfig, Target, RelocMode, CodeModel, FileType}, IntPredicate};
 
-use crate::{syntax::{Instructiune, FloatRvalue, FloatUnop, FloatBinop, ScrieParam, Lvalue, BoolRvalue, BoolFloatBinop, BoolBoolBinop}, runtime::EPSILON};
-
-pub fn compile<'a>(
-	instructions: &Vec<Instructiune<'a>>,
-) {
-	let context = Context::create();
-	let builder = context.create_builder();
-	let variables_builder = context.create_builder();
-	let module = context.create_module("main");
-	let main_fn = Compiler::compile(&context, &builder, &variables_builder, &module, instructions);
-	main_fn.verify(true);
-
-	let engine = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
-	unsafe {
-		engine.run_function(main_fn, &[]);
-	}
-}
+use crate::{syntax::{Instructiune, FloatRvalue, FloatUnop, FloatBinop, ScrieParam, Lvalue, BoolRvalue, BoolFloatBinop, BoolBoolBinop}, runtime::EPSILON, parse};
 
 #[derive(Clone, Copy)]
 struct Variable<'ctx> {
@@ -28,77 +12,117 @@ struct Variable<'ctx> {
 	is_set: PointerValue<'ctx>,
 }
 
+// errors
 #[derive(Debug)]
-enum CompilerErorr {
+pub enum CompilerError {
 	BuilderError(BuilderError),
+	VerificationError(VerificationError),
+	LLVMError(inkwell::support::LLVMString),
+	ClangError(ClangError),
+	ParserError(parse::ParsingError),
 }
 
-impl From<BuilderError> for CompilerErorr {
+impl From<BuilderError> for CompilerError {
 	fn from(err: BuilderError) -> Self {
-		CompilerErorr::BuilderError(err)
+		CompilerError::BuilderError(err)
   }
 }
 
-trait Compile<'a, 'from_ctx, 'ctx> {
-	type Output;
-	fn compile(&self, compiler: &mut Compiler<'a, 'from_ctx, 'ctx>) -> Result<Self::Output, CompilerErorr>;
+#[derive(Debug)]
+pub struct VerificationError(inkwell::support::LLVMString);
+impl From<VerificationError> for CompilerError {
+	fn from(err: VerificationError) -> Self {
+		CompilerError::VerificationError(err)
+  }
 }
 
-impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for FloatRvalue<'a> {
+impl From<inkwell::support::LLVMString> for VerificationError {
+	fn from(err: inkwell::support::LLVMString) -> Self {
+		VerificationError(err)
+  }
+}
+
+impl From<inkwell::support::LLVMString> for CompilerError {
+	fn from(err: inkwell::support::LLVMString) -> Self {
+		CompilerError::LLVMError(err)
+  }
+}
+
+#[derive(Debug)]
+pub struct ClangError {
+	pub stdout: String,
+	pub stderr: String,
+	pub status: std::process::ExitStatus,
+}
+
+impl From<std::process::Output> for ClangError {
+	fn from(value: std::process::Output) -> Self {
+    ClangError {
+			stdout: String::from_utf8(value.stdout).unwrap(),
+			stderr: String::from_utf8(value.stderr).unwrap(),
+    	status: value.status,
+	  }
+  }
+}
+
+impl From<ClangError> for CompilerError {
+	fn from(err: ClangError) -> Self {
+		CompilerError::ClangError(err)
+  }
+}
+
+impl From<parse::ParsingError> for CompilerError {
+	fn from(err: parse::ParsingError) -> Self {
+		CompilerError::ParserError(err)
+  }
+}
+
+// compilation
+trait Compile<'src, 'ctx> {
+	type Output;
+	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError>;
+}
+
+impl<'src, 'ctx> Compile<'src, 'ctx> for FloatRvalue<'src> {
 	type Output = FloatValue<'ctx>;
-	fn compile(&self, compiler: &mut Compiler<'a, 'from_ctx, 'ctx>) -> Result<Self::Output, CompilerErorr> {
+	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
 		Ok(
 			match self {
 				FloatRvalue::Literal(x) => compiler.context.f64_type().const_float(*x as f64),
-				FloatRvalue::Unop(unop, x) => match unop {
-					FloatUnop::Ident => x.compile(compiler)?,
-					FloatUnop::Neg => compiler.builder.build_float_neg(
-						x.compile(compiler)?,
-						"tmp_neg",
-					)?,
-					FloatUnop::Whole => {
-						let trunc_int = compiler.builder.build_float_to_signed_int(
-							x.compile(compiler)?,
-							compiler.context.i64_type(),
-							"tmp_trunc",
-						)?;
-						let trunc_float = compiler.builder.build_signed_int_to_float(
-							trunc_int,
-							compiler.context.f64_type(),
-							"tmp_cast",
-						)?;
-						trunc_float
-					},
+				FloatRvalue::Unop(unop, x) => {
+					let x = x.compile(compiler)?;
+					match unop {
+						FloatUnop::Ident => x,
+						FloatUnop::Neg => compiler.builder.build_float_neg(x, "tmp_neg")?,
+						FloatUnop::Whole => {
+							let trunc_int = compiler.builder.build_float_to_signed_int(
+								x,
+								compiler.context.i64_type(),
+								"tmp_trunc",
+							)?;
+							let trunc_float = compiler.builder.build_signed_int_to_float(
+								trunc_int,
+								compiler.context.f64_type(),
+								"tmp_cast",
+							)?;
+							trunc_float
+						},
+					}
 				}
-				FloatRvalue::Binop(binop, x, y) => match binop {
-					FloatBinop::Add => compiler.builder.build_float_add(
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"tmp_add",
-					).unwrap(),
-					FloatBinop::Sub => compiler.builder.build_float_sub(
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"tmp_sub",
-					).unwrap(),
-					FloatBinop::Mul => compiler.builder.build_float_mul(
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"tmp_mul",
-					).unwrap(),
-					FloatBinop::Div => compiler.builder.build_float_div(
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"tmp_div",
-					).unwrap(),
-					FloatBinop::Rem => compiler.builder.build_float_rem(
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"tmp_rem",
-					).unwrap(),
+				FloatRvalue::Binop(binop, x, y) => {
+					let x = x.compile(compiler)?;
+					let y = y.compile(compiler)?;
+					match binop {
+						FloatBinop::Add => compiler.builder.build_float_add(x, y, "tmp_add")?,
+						FloatBinop::Sub => compiler.builder.build_float_sub(x, y, "tmp_sub")?,
+						FloatBinop::Mul => compiler.builder.build_float_mul(x, y, "tmp_mul")?,
+						FloatBinop::Div => compiler.builder.build_float_div(x, y, "tmp_div")?,
+						FloatBinop::Rem => compiler.builder.build_float_rem(x, y, "tmp_rem")?,
+					}
 				}
+				
 				FloatRvalue::Lvalue(x) => {
-					let value = compiler.get_variable_value(x);
+					let value = compiler.get_variable_value(x)?;
 					let value = compiler.builder.build_load(compiler.context.f64_type(), value, "")?;
 					value.into_float_value()
 				}
@@ -107,102 +131,91 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for FloatRvalue<'a> {
   }
 }
 
-impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for BoolRvalue<'a> {
+impl<'src, 'ctx> Compile<'src, 'ctx> for BoolRvalue<'src> {
 	type Output = IntValue<'ctx>;
-	fn compile(&self, compiler: &mut Compiler<'a, 'from_ctx, 'ctx>) -> Result<Self::Output, CompilerErorr> {
+	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
 		Ok(
 			match self {
-				BoolRvalue::BoolFloatBinop(op, x, y) => match op {
-					BoolFloatBinop::Eq => {
-						let delta = compiler.builder.build_float_sub(
-							x.compile(compiler)?,
-							y.compile(compiler)?,
-							"",
-						)?;
-						compiler.builder.build_and(
-							compiler.builder.build_float_compare(
-								FloatPredicate::OLT,
-								delta,
-								compiler.context.f64_type().const_float(EPSILON.into()),
+				BoolRvalue::BoolFloatBinop(op, x, y) => {
+					let x = x.compile(compiler)?;
+					let y = y.compile(compiler)?;
+					match op {
+						BoolFloatBinop::Eq => {
+							let delta = compiler.builder.build_float_sub(x, y, "")?;
+							compiler.builder.build_and(
+								compiler.builder.build_float_compare(
+									FloatPredicate::OLT,
+									delta,
+									compiler.context.f64_type().const_float(EPSILON.into()),
+									"",
+								)?,
+								compiler.builder.build_float_compare(
+									FloatPredicate::OGT,
+									delta,
+									compiler.context.f64_type().const_float((-EPSILON).into()),
+									"",
+								)?,
+								"tmp_eq",
+							)?
+						}
+						BoolFloatBinop::Neq => {
+							let delta = compiler.builder.build_float_sub(x, y, "")?;
+							compiler.builder.build_or(
+								compiler.builder.build_float_compare(
+									FloatPredicate::OGE,
+									delta,
+									compiler.context.f64_type().const_float(EPSILON.into()),
+									"",
+								)?,
+								compiler.builder.build_float_compare(
+									FloatPredicate::OLE,
+									delta,
+									compiler.context.f64_type().const_float((-EPSILON).into()),
+									"",
+								)?,
+								"tmp_neq",
+							)?
+						}
+						BoolFloatBinop::Lt => compiler.builder.build_float_compare(FloatPredicate::OLT, x, y, "tmp_lt")?,
+						BoolFloatBinop::Gt => compiler.builder.build_float_compare(FloatPredicate::OGT, x, y, "tmp_gt")?,
+						BoolFloatBinop::Lte => compiler.builder.build_float_compare(FloatPredicate::OLE, x, y, "tmp_lte")?,
+						BoolFloatBinop::Gte => compiler.builder.build_float_compare(FloatPredicate::OGE, x, y, "tmp_gte")?,
+						BoolFloatBinop::Divides => compiler.builder.build_int_compare(
+							IntPredicate::EQ,
+							compiler.builder.build_int_signed_rem(
+								compiler.builder.build_float_to_signed_int(
+									y,
+									compiler.context.i64_type(),
+									"",
+								)?,
+								compiler.builder.build_float_to_signed_int(
+									x,
+									compiler.context.i64_type(),
+									"",
+								)?,
 								"",
 							)?,
-							compiler.builder.build_float_compare(
-								FloatPredicate::OGT,
-								delta,
-								compiler.context.f64_type().const_float((-EPSILON).into()),
-								"",
-							)?,
-							"",
-						)?
+							compiler.context.i64_type().const_zero(),
+							"tmp_divides",
+						)?,
 					}
-					BoolFloatBinop::Neq => {
-						let delta = compiler.builder.build_float_sub(
-							x.compile(compiler)?,
-							y.compile(compiler)?,
-							"",
-						)?;
-						compiler.builder.build_and(
-							compiler.builder.build_float_compare(
-								FloatPredicate::OGE,
-								delta,
-								compiler.context.f64_type().const_float(EPSILON.into()),
-								"",
-							)?,
-							compiler.builder.build_float_compare(
-								FloatPredicate::OLE,
-								delta,
-								compiler.context.f64_type().const_float((-EPSILON).into()),
-								"",
-							)?,
-							"",
-						)?
-					}
-					BoolFloatBinop::Lt => compiler.builder.build_float_compare(
-						FloatPredicate::OLT,
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"",
-					)?,
-					BoolFloatBinop::Gt => compiler.builder.build_float_compare(
-						FloatPredicate::OGT,
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"",
-					)?,
-					BoolFloatBinop::Lte => compiler.builder.build_float_compare(
-						FloatPredicate::OLE,
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"",
-					)?,
-					BoolFloatBinop::Gte => compiler.builder.build_float_compare(
-						FloatPredicate::OGE,
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"",
-					)?,
-					BoolFloatBinop::Divides => todo!(),
 				}
-				BoolRvalue::BoolBoolBinop(op, x, y) => match op {
-					BoolBoolBinop::And => compiler.builder.build_and(
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"",
-					)?,
-					BoolBoolBinop::Or => compiler.builder.build_or(
-						x.compile(compiler)?,
-						y.compile(compiler)?,
-						"",
-					)?,
+				BoolRvalue::BoolBoolBinop(op, x, y) => {
+					let x = x.compile(compiler)?;
+					let y = y.compile(compiler)?;
+					match op {
+						BoolBoolBinop::And => compiler.builder.build_and(x, y, "tmp_and")?,
+						BoolBoolBinop::Or => compiler.builder.build_or(x, y, "tmp_or")?,
+					}
 				}
 			}
 		)
   }
 }
 
-impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
+impl<'src, 'ctx> Compile<'src, 'ctx> for [Instructiune<'src>] {
 	type Output = ();
-	fn compile(&self, compiler: &mut Compiler<'a, 'from_ctx, 'ctx>) -> Result<Self::Output, CompilerErorr> {
+	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
 		for instruction in self.iter() {
 			match instruction {
 				Instructiune::Scrie(params) => {
@@ -221,7 +234,7 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 						);
 						format.push_str("\n");
 						
-						let format = compiler.builder.build_global_string_ptr(format.as_str(), "printf_format").unwrap();
+						let format = compiler.builder.build_global_string_ptr(format.as_str(), "printf_format")?;
 						let format = format.as_pointer_value();
 						args.push(format.into());
 					}
@@ -230,15 +243,15 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 					for param in params {
 						match param {
 							ScrieParam::Rvalue(x) => {
-								let x = x.compile(compiler).unwrap();
+								let x = x.compile(compiler)?;
 								args.push(x.into());
 							}
 							ScrieParam::CharacterLiteral(chr) => {
-								let chr = compiler.builder.build_global_string_ptr(chr, "").unwrap().as_pointer_value();
+								let chr = compiler.builder.build_global_string_ptr(chr, "")?.as_pointer_value();
 								args.push(chr.into());
 							}
 							ScrieParam::StringLiteral(string) => {
-								let string = compiler.builder.build_global_string_ptr(string, "").unwrap().as_pointer_value();
+								let string = compiler.builder.build_global_string_ptr(string, "")?.as_pointer_value();
 								args.push(string.into());
 							}
 						}
@@ -248,11 +261,11 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 						compiler.printf_fn,
 						args.as_slice(),
 						"scrie_printf"
-					).unwrap();
+					)?;
 				}
 				Instructiune::Atribuire(lvalue, rvalue) => {
-					let rvalue = rvalue.compile(compiler).unwrap();
-					compiler.set_variable_value(lvalue, rvalue);
+					let rvalue = rvalue.compile(compiler)?;
+					compiler.set_variable_value(lvalue, rvalue)?;
 				}
 				Instructiune::Citeste(lvalues) => {
 					let mut args = Vec::new();
@@ -265,7 +278,7 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 							.join(" ")
 						);
 
-						let format = compiler.builder.build_global_string_ptr(format.as_str(), "scanf_format").unwrap();
+						let format = compiler.builder.build_global_string_ptr(format.as_str(), "scanf_format")?;
 						let format = format.as_pointer_value();
 						args.push(format.into());
 					}
@@ -288,46 +301,52 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 
 					for (lvalue, alloca) in izip!(lvalues, allocas) {
 						let value = compiler.builder.build_load(compiler.context.f64_type(), alloca, "")?.into_float_value();
-						compiler.set_variable_value(lvalue, value);
+						compiler.set_variable_value(lvalue, value)?;
 					}
 				}
+				Instructiune::Interschimbare(x, y) => {
+					let x_ptr_value = compiler.get_variable_value(x)?;
+					let x_value = compiler.builder.build_load(compiler.context.f64_type(), x_ptr_value, "x_value")?;
+
+					let y_ptr_value = compiler.get_variable_value(y)?;
+					let y_value = compiler.builder.build_load(compiler.context.f64_type(), y_ptr_value, "y_value")?;
+
+					compiler.set_variable_value(y, x_value.into_float_value())?;
+					compiler.set_variable_value(x, y_value.into_float_value())?;
+				}
 				Instructiune::DacaAtunciAltfel(conditie, atunci, altfel) => {
+					let atunci_block = compiler.context.append_basic_block(compiler.main_fn, "atunci");
+					let altfel_block = compiler.context.append_basic_block(compiler.main_fn, "altfel");
+					let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
+
+					// current block
 					let conditie = conditie.compile(compiler)?;
-
-					let atunci_block = compiler.context.append_basic_block(compiler.function, "atunci");
-					let altfel_block = compiler.context.append_basic_block(compiler.function, "altfel");
-					let merge_block = compiler.context.append_basic_block(compiler.function, "merge");
-
 					compiler.builder.build_conditional_branch(conditie, atunci_block, altfel_block)?;
 
+					// atunci_block
 					compiler.builder.position_at_end(atunci_block);
 					atunci.compile(compiler)?;
 					compiler.builder.build_unconditional_branch(merge_block)?;
 
+					// altfel_block
 					compiler.builder.position_at_end(altfel_block);
 					if let Some(altfel) = altfel {
 						altfel.compile(compiler)?;
 					}
 					compiler.builder.build_unconditional_branch(merge_block)?;
 
+					// merge_block
 					compiler.builder.position_at_end(merge_block);
 				}
-				Instructiune::Interschimbare(x, y) => {
-					let x_ptr_value = compiler.get_variable_value(x);
-					let x_value = compiler.builder.build_load(compiler.context.f64_type(), x_ptr_value, "x_value")?;
-
-					let y_ptr_value = compiler.get_variable_value(y);
-					let y_value = compiler.builder.build_load(compiler.context.f64_type(), y_ptr_value, "y_value")?;
-
-					compiler.set_variable_value(y, x_value.into_float_value());
-					compiler.set_variable_value(x, y_value.into_float_value());
-				}
 				Instructiune::CatTimpExecuta(conditie, executa) => {
-					let conditie_block = compiler.context.append_basic_block(compiler.function, "conditie");
-					let executa_block = compiler.context.append_basic_block(compiler.function, "executa");
-					let merge_block = compiler.context.append_basic_block(compiler.function, "merge");
+					let conditie_block = compiler.context.append_basic_block(compiler.main_fn, "conditie");
+					let executa_block = compiler.context.append_basic_block(compiler.main_fn, "executa");
+					let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
+
+					// current block
 					compiler.builder.build_unconditional_branch(conditie_block)?;
 
+					// conditie_block
 					compiler.builder.position_at_end(conditie_block);
 					let conditie = conditie.compile(compiler)?;
 					compiler.builder.build_conditional_branch(
@@ -336,17 +355,22 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 						merge_block,
 					)?;
 
+					// executa_block
 					compiler.builder.position_at_end(executa_block);
 					executa.compile(compiler)?;
 					compiler.builder.build_unconditional_branch(conditie_block)?;
 
+					// merge_block
 					compiler.builder.position_at_end(merge_block);
 				}
 				Instructiune::RepetaPanaCand(repeta, conditie) => {
-					let repeta_block = compiler.context.append_basic_block(compiler.function, "repeta");
-					let merge_block = compiler.context.append_basic_block(compiler.function, "merge");
+					let repeta_block = compiler.context.append_basic_block(compiler.main_fn, "repeta");
+					let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
 
+					// current block
 					compiler.builder.build_unconditional_branch(repeta_block)?;
+
+					// repeta_block
 					compiler.builder.position_at_end(repeta_block);
 					repeta.compile(compiler)?;
 					let conditie = conditie.compile(compiler)?;
@@ -356,13 +380,15 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 						repeta_block,
 					)?;
 
+					// merge_block
 					compiler.builder.position_at_end(merge_block);
 				}
 				Instructiune::PentruExecuta(contor, start, stop, increment, executa) => {
-					let cond_block = compiler.context.append_basic_block(compiler.function, "cond");
-					let executa_block = compiler.context.append_basic_block(compiler.function, "executa");
-					let merge_block = compiler.context.append_basic_block(compiler.function, "merge");
+					let conditie_block = compiler.context.append_basic_block(compiler.main_fn, "conditie");
+					let executa_block = compiler.context.append_basic_block(compiler.main_fn, "executa");
+					let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
 
+					// current block
 					let start = start.compile(compiler)?;
 					let stop = stop.compile(compiler)?;
 					let increment = if let Some(increment) = increment {
@@ -371,20 +397,19 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 						compiler.context.f64_type().const_float(1.0)
 					};
 					let increment_is_positive = compiler.builder.build_float_compare(
-						FloatPredicate::OGT,
+						FloatPredicate::OGE,
 						increment,
 						compiler.context.f64_type().const_zero(),
 						"increment_is_positive",
 					)?;
-					compiler.set_variable_value(contor, start);
+					compiler.set_variable_value(contor, start)?;
+					compiler.builder.build_unconditional_branch(conditie_block)?;
 
-					compiler.builder.build_unconditional_branch(cond_block)?;
-
-					// cond block
-					compiler.builder.position_at_end(cond_block);
+					// conditie_block
+					compiler.builder.position_at_end(conditie_block);
 
 					let conditie = {
-						let contor_ptr = compiler.get_variable_value(contor);
+						let contor_ptr = compiler.get_variable_value(contor)?;
 						let contor = compiler.builder.build_load(compiler.context.f64_type(), contor_ptr, "contor")?.into_float_value();
 
 						// NOTE: Yeah, this is quite gnarly, I know.
@@ -408,7 +433,7 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 								compiler.builder.build_and(
 									compiler.builder.build_not(
 										increment_is_positive,
-										"",
+										"increment_is_negative",
 									)?,
 									compiler.builder.build_float_compare(
 										FloatPredicate::OGT,
@@ -442,17 +467,17 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
 
 					compiler.builder.build_conditional_branch(conditie, executa_block, merge_block)?;
 
-					// executa block
+					// executa_block
 					compiler.builder.position_at_end(executa_block);
 					executa.compile(compiler)?;
 					
-					let contor_ptr = compiler.get_variable_value(contor);
+					let contor_ptr = compiler.get_variable_value(contor)?;
 					let contor_value = compiler.builder.build_load(compiler.context.f64_type(), contor_ptr, "contor")?.into_float_value();
-					let new_contor = compiler.builder.build_float_add(contor_value, increment, "")?;
-					compiler.set_variable_value(contor, new_contor);
-					compiler.builder.build_unconditional_branch(cond_block)?;
+					let incremented_contor = compiler.builder.build_float_add(contor_value, increment, "")?;
+					compiler.set_variable_value(contor, incremented_contor)?;
+					compiler.builder.build_unconditional_branch(conditie_block)?;
 
-					// merge block
+					// merge_block
 					compiler.builder.position_at_end(merge_block);
 				}
 			}
@@ -461,185 +486,265 @@ impl<'a, 'from_ctx, 'ctx> Compile<'a, 'from_ctx, 'ctx> for [Instructiune<'a>] {
   }
 }
 
-pub struct Compiler<'a, 'from_ctx, 'ctx> {
-	pub context: &'ctx Context,
-	pub builder: &'from_ctx Builder<'ctx>,
-	pub module: &'from_ctx Module<'ctx>,
-	pub function: FunctionValue<'ctx>,
+pub struct Compiler<'src, 'ctx> {
+	context: &'ctx Context,
+	module: Module<'ctx>,
 
-	variables_builder: &'from_ctx Builder<'ctx>,
-	variables_block: BasicBlock<'ctx>,
+	builder: Builder<'ctx>,
 
-	variables: HashMap<&'a str, Variable<'ctx>>,
+	variables_builder: Builder<'ctx>,
+	variables: HashMap<&'src str, Variable<'ctx>>,
 	
+	main_fn: FunctionValue<'ctx>,
+
 	printf_fn: FunctionValue<'ctx>,
 	scanf_fn: FunctionValue<'ctx>,
+	exit_fn: FunctionValue<'ctx>,
 
 	fail_block: BasicBlock<'ctx>,
 }
 
-impl<'a, 'from_ctx, 'ctx> Compiler<'a, 'from_ctx, 'ctx> {
-	pub fn compile(
-		context: &'ctx Context,
-		builder: &'from_ctx Builder<'ctx>,
-		variables_builder: &'from_ctx Builder<'ctx>,
-		module: &'from_ctx Module<'ctx>,
-		instructions: &Vec<Instructiune<'a>>,
-	) -> FunctionValue<'ctx> {
-		let printf_fn = module.add_function(
-			"printf",
-			context.i32_type().fn_type(
-				&[
-					context.i8_type().ptr_type(AddressSpace::default()).into()
-				],
-				true,
-			),
-			None,
-		);
-		printf_fn.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
+impl<'src, 'ctx> Compiler<'src, 'ctx> {
+	pub fn new(context: &'ctx Context) -> Result<Self, CompilerError> {
+		Ok({
+			let module = context.create_module("main");
+		
+			// external libc functions
+			let printf_fn = module.add_function(
+				"printf",
+				context.i64_type().fn_type(
+					&[
+						context.i8_type().ptr_type(AddressSpace::default()).into(),
+					],
+					true,
+				),
+				None,
+			);
+			printf_fn.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
 
-		let scanf_fn = module.add_function(
-			"scanf",
-			context.i32_type().fn_type(
-				&[
-					context.i8_type().ptr_type(AddressSpace::default()).into()
-				],
-				true,
-			),
-			None,
-		);
-		scanf_fn.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
+			let scanf_fn = module.add_function(
+				"scanf",
+				context.i64_type().fn_type(
+					&[
+						context.i8_type().ptr_type(AddressSpace::default()).into(),
+					],
+					true,
+				),
+				None,
+			);
+			scanf_fn.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
 
-		let function = module.add_function("main", context.i32_type().fn_type(&[], false), None);
-		let variables_block = context.append_basic_block(function, "variables");
-		variables_builder.position_at_end(variables_block);
+			let exit_fn = module.add_function(
+				"exit",
+				context.void_type().fn_type(
+					&[
+						context.i64_type().into(),
+					],
+					false,
+				),
+				None,
+			);
+			exit_fn.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
 
-		let fail_block = {
-			let fail_block = context.append_basic_block(function, "fail");
-			builder.position_at_end(fail_block);
+			// main_fn
+			let main_fn = module.add_function("main", context.i64_type().fn_type(&[], false), None);
+
+			// variables
+			let variables_builder = context.create_builder();
+			let variables_block = context.append_basic_block(main_fn, "variables");
+			variables_builder.position_at_end(variables_block);
+
+			let builder = context.create_builder();
+			let fail_block = {
+				let fail_block = context.append_basic_block(main_fn, "fail");
+				builder.position_at_end(fail_block);
 			
-			let args = [
-				builder.build_global_string_ptr("Variabila nu are nici o valoare!\n", "").unwrap().as_pointer_value().into(),
-			];
-			builder.build_call(
+				let args = [
+					builder.build_global_string_ptr("Variabila nu are nici o valoare!\n", "")?.as_pointer_value().into(),
+				];
+				builder.build_call(
+					printf_fn,
+					args.as_slice(),
+					"error_printf"
+				)?;
+
+				builder.build_call(exit_fn, &[context.i64_type().const_int(1, false).into()], "")?;
+				builder.build_return(Some(&context.i64_type().const_int(1, false)))?;
+				fail_block
+			};
+
+			let compiler = Self {
+				context,
+				module,
+
+				builder,
+
+				variables_builder,
+				variables: HashMap::new(),
+	
+				main_fn,
+
 				printf_fn,
-				args.as_slice(),
-				"error_printf"
-			).unwrap();
+				scanf_fn,
+				exit_fn,
 
-			builder.build_return(Some(&context.i32_type().const_int(1, false))).unwrap();
-			fail_block
-		};
-
-		let mut compiler = Self {
-			context,
-			builder,
-			module,
-			function,
-
-			variables_builder,
-			variables_block,
-
-			variables: HashMap::new(),
-
-			printf_fn,
-			scanf_fn,
-
-			fail_block,
-		};
-
-		let start_block = compiler.context.append_basic_block(compiler.function, "start");
-
-		compiler.builder.position_at_end(start_block);
-		instructions.compile(&mut compiler).unwrap();
-		compiler.builder.build_return(Some(&compiler.context.i32_type().const_int(0, false))).unwrap();
-
-		variables_builder.build_unconditional_branch(start_block).unwrap();
-
-		compiler.module.print_to_stderr();
-
-		compiler.function
+				fail_block,
+			};
+			compiler
+		})
 	}
 
-	// variable
-	// - value
-	// - is_assigned
+	pub fn compile(
+		&mut self,
+		code: &'src str,
+	) -> Result<(), CompilerError> {
+		let program = parse::parse(code)?;
+		self.compile_parsed(&program)?;
+		Ok(())
+	}
+	
+	fn compile_parsed(
+		&mut self,
+		instructions: &Vec<Instructiune<'src>>,
+	) -> Result<(), CompilerError> {
+		let start_block = self.context.append_basic_block(self.main_fn, "start");
 
-	// in the beginning, is_assigned is 0
+		self.builder.position_at_end(start_block);
+		instructions.compile(self)?;
+		self.builder.build_call(self.exit_fn, &[self.context.i64_type().const_int(0, false).into()], "")?;
+		self.builder.build_return(Some(&self.context.i64_type().const_int(0, false)))?;
+		self.variables_builder.build_unconditional_branch(start_block)?;
 
-	// when assigning variable
-	// - set is_assigned to 1
+		self.module.verify().map_err(VerificationError::from)?;
 
-	// when accessing variable
-	// - check if is_assigned is 1, otherwise blow up
+		Ok(())
+	}
 
-	/*
+	pub fn write_object<P: AsRef<Path>>(
+		&self,
+		path: P,
+		optimization_level: OptimizationLevel,
+	) -> Result<(), CompilerError> {
+		let path = path.as_ref();
+		
+		let target_triple = inkwell::targets::TargetMachine::get_default_triple();
+		Target::initialize_all(&InitializationConfig::default());
+		let target = Target::from_triple(&target_triple)?;
+		let target_machine = target.create_target_machine(
+			&target_triple,
+			"generic",
+			"",
+			optimization_level,
+			RelocMode::PIC,
+			CodeModel::Default,
+		).unwrap();
+		target_machine.write_to_file(&self.module, FileType::Object, path)?;
 
-	self.get_variable_unchecked("name")
-	self.get_variable("name")
-	self.set_variable("name")
+		Ok(())
+	}
 
-	*/
+	pub fn write_executable<P: AsRef<Path>>(
+		&self,
+		path: P,
+		optimization_level: OptimizationLevel,
+	) -> Result<(), CompilerError> {
+		let path = path.as_ref();
 
-	fn get_variable(&mut self, lvalue: &Lvalue<'a>) -> Variable<'ctx> {
-		*self.variables.entry(lvalue.0).or_insert_with_key(|key| {
-			let value = {
-				let mut name = String::new();
-				name.push_str("value_");
-				name.push_str(key);
-				self.variables_builder.build_alloca(self.context.f64_type(), name.as_str()).unwrap()
-			};
+		let object_path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+		let object_path = &object_path;
+		self.write_object(object_path, optimization_level)?;
 
-			let is_set = {
-				let mut name = String::new();
-				name.push_str("is_set_");
-				name.push_str(key);
-				self.variables_builder.build_alloca(self.context.i64_type(), name.as_str()).unwrap()
-			};
+		let output = Command::new("clang")
+			.arg("-lm")
+			.arg(object_path)
+			.arg("-o").arg(path)
+			.output().unwrap();
+		if !output.status.success() {
+			return Err(CompilerError::from(ClangError::from(output)));
+		}
 
-			Variable {
-				value,
-				is_set,
-			}
+		Ok(())
+	}
+
+	pub fn write_llvm_ir<P: AsRef<Path>>(
+		&self,
+		path: P,
+	) -> Result<(), CompilerError> {
+		self.module.print_to_file(path)?;
+		Ok(())
+	}
+}
+
+impl<'src, 'ctx> Compiler<'src, 'ctx> {
+	fn get_variable(&mut self, lvalue: &Lvalue<'src>) -> Result<Variable<'ctx>, CompilerError> {
+		Ok({
+			let key = lvalue.0;
+			if !self.variables.contains_key(key) {
+				let value = {
+					let mut name = String::new();
+					name.push_str("value_");
+					name.push_str(key);
+					self.variables_builder.build_alloca(self.context.f64_type(), name.as_str())?
+				};
+
+				let is_set = {
+					let mut name = String::new();
+					name.push_str("is_set_");
+					name.push_str(key);
+					self.variables_builder.build_alloca(self.context.i64_type(), name.as_str())?
+				};
+
+				let value = Variable {
+					value,
+					is_set,
+				};
+
+				self.variables.insert(key, value);
+			}			
+			self.variables[key]
 		})
 	}
 
 	fn get_variable_value(
 		&mut self,
-		lvalue: &Lvalue<'a>,
-	) -> PointerValue<'ctx> {
-		let variable = self.get_variable(lvalue);
+		lvalue: &Lvalue<'src>,
+	) -> Result<PointerValue<'ctx>, CompilerError> {
+		Ok({
+			let variable = self.get_variable(lvalue)?;
 
-		let is_set = self.builder.build_load(
-			self.context.i64_type(),
-			variable.is_set,
-			"load_is_set",
-		).unwrap();
+			// TODO: Would be nice to dedup these checks.
+			let is_set = self.builder.build_load(
+				self.context.i64_type(),
+				variable.is_set,
+				"load_is_set",
+			)?;
 
-		let cmp = self.builder.build_int_compare(
-			inkwell::IntPredicate::EQ,
-			is_set.into_int_value(),
-			self.context.i64_type().const_zero(),
-			"check_is_set",
-		).unwrap();
+			let cmp = self.builder.build_int_compare(
+				IntPredicate::EQ,
+				is_set.into_int_value(),
+				self.context.i64_type().const_zero(),
+				"check_is_set",
+			)?;
 
-		let merge_block = self.context.append_basic_block(self.function, "merge");
-		self.builder.build_conditional_branch(cmp, self.fail_block, merge_block).unwrap();
+			let merge_block = self.context.append_basic_block(self.main_fn, "merge");
+			self.builder.build_conditional_branch(cmp, self.fail_block, merge_block)?;
 
-		self.builder.position_at_end(merge_block);
-		variable.value
+			self.builder.position_at_end(merge_block);
+			variable.value
+		})
 	}
 
-	fn set_variable_value(&mut self, lvalue: &Lvalue<'a>, rvalue: FloatValue<'ctx>) {
-		let variable = self.get_variable(lvalue);
+	fn set_variable_value(&mut self, lvalue: &Lvalue<'src>, rvalue: FloatValue<'ctx>) -> Result<(), CompilerError> {
+		let variable = self.get_variable(lvalue)?;
 		self.builder.build_store(
 			variable.value,
 			rvalue,
-		).unwrap();
+		)?;
 		self.builder.build_store(
 			variable.is_set,
 			self.context.i64_type().const_int(1, false),
-		).unwrap();
+		)?;
+		Ok(())
 	}
 }
 

@@ -10,7 +10,7 @@ use crate::syntax::{
 	FloatRvalue, BoolRvalue,
 };
 
-pub const EPSILON: f32 = 0.001;
+pub const EPSILON: f32 = 0.000001;
 pub const INSTRUCTIONS_EXECUTED_LIMIT: usize = 1_000_000;
 
 fn float_evaluate<'a>(

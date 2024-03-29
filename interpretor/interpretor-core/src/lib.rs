@@ -3,6 +3,9 @@ mod runtime;
 mod syntax;
 mod compiler;
 
+pub use compiler::Compiler;
+pub use inkwell::{context::Context, OptimizationLevel};
+
 pub fn interpret<Reader: std::io::BufRead, Writer: std::io::Write>(
 	code: &str,
 	reader: &mut Reader,
@@ -27,12 +30,6 @@ pub fn interpret<Reader: std::io::BufRead, Writer: std::io::Write>(
 			runtime::RuntimeState::Finished => return Ok(()),
 		};
 	}
-}
-pub fn compile(
-	code: &str,
-) {
-	let instructions = parse::parse(code).unwrap();
-	compiler::compile(&instructions);
 }
 
 pub type InterpretingResult = Result<(), InterpretingError>;

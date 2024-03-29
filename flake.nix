@@ -31,10 +31,13 @@
             pkgs.cargo
 
             pkgs.llvmPackages_17.libllvm
+            pkgs.llvmPackages_17.lld
             pkgs.libffi
             pkgs.libxml2
 
             pkgs.llvmPackages_17.libcxxClang
+
+            pkgs.gdb
           ];
           LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
         };

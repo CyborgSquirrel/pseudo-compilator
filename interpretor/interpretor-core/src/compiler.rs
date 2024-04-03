@@ -2,9 +2,9 @@ use std::{collections::HashMap, path::Path, process::Command};
 
 use itertools::{Itertools, izip};
 
-use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, IntValue}, builder::{Builder, BuilderError}, module::Module, AddressSpace, OptimizationLevel, llvm_sys::LLVMCallConv, basic_block::BasicBlock, FloatPredicate, targets::{InitializationConfig, Target, RelocMode, CodeModel, FileType}, IntPredicate};
+use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, IntValue}, builder::{Builder, BuilderError}, module::Module, AddressSpace, OptimizationLevel, llvm_sys::LLVMCallConv, basic_block::BasicBlock, FloatPredicate, targets::{InitializationConfig, Target, RelocMode, CodeModel, FileType}, IntPredicate, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram}};
 
-use crate::{ast::{Instructiune, FloatRvalue, FloatUnop, FloatBinop, ScrieParam, Lvalue, BoolRvalue, BoolFloatBinop, BoolBoolBinop}, runtime::EPSILON, parse};
+use crate::{ast::{Instructiune, FloatRvalue, FloatUnop, FloatBinop, ScrieParam, Lvalue, BoolRvalue, BoolFloatBinop, BoolBoolBinop, InstructiuneNode, Location}, runtime::EPSILON, parse};
 
 #[derive(Clone, Copy)]
 struct Variable<'ctx> {
@@ -213,11 +213,22 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for BoolRvalue<'src> {
   }
 }
 
-impl<'src, 'ctx> Compile<'src, 'ctx> for [Instructiune<'src>] {
+impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 	type Output = ();
 	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
 		for instruction in self.iter() {
-			match instruction {
+			// NOTE: Set the debug location to the current instruction's location, except
+			// for RepetaPanaCand. We're excluding RepetaPanaCand, because its location
+			// points to the "pana cand <condition>" part, which shows up after all its
+			// instructions.
+			match &instruction.inner {
+				Instructiune::RepetaPanaCand(_, _) => { },
+				_ => {
+					compiler.builder.set_current_debug_location(compiler.get_debug_location(&instruction.location));
+				}
+			}
+			
+			match &instruction.inner {
 				Instructiune::Scrie(params) => {
 					let mut args = Vec::new();
 
@@ -373,6 +384,8 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [Instructiune<'src>] {
 					// repeta_block
 					compiler.builder.position_at_end(repeta_block);
 					repeta.compile(compiler)?;
+
+					compiler.builder.set_current_debug_location(compiler.get_debug_location(&instruction.location));
 					let conditie = conditie.compile(compiler)?;
 					compiler.builder.build_conditional_branch(
 						conditie,
@@ -502,13 +515,70 @@ pub struct Compiler<'src, 'ctx> {
 	exit_fn: FunctionValue<'ctx>,
 
 	fail_block: BasicBlock<'ctx>,
+
+	debug_info_builder: DebugInfoBuilder<'ctx>,
+	debug_compile_unit: DICompileUnit<'ctx>,
+	debug_main_function: DISubprogram<'ctx>,
 }
 
 impl<'src, 'ctx> Compiler<'src, 'ctx> {
-	pub fn new(context: &'ctx Context) -> Result<Self, CompilerError> {
+	pub fn compile<P: AsRef<Path>>(
+		context: &'ctx Context,
+		code: &'src str,
+		path: P,
+	) -> Result<Self, CompilerError> {
 		Ok({
+			let path = path.as_ref();
+
 			let module = context.create_module("main");
-		
+
+			// debug boilerplate
+			let debug_metadata_version = context.i32_type().const_int(3, false);
+			module.add_basic_value_flag(
+		    "Debug Info Version",
+		    inkwell::module::FlagBehavior::Warning,
+		    debug_metadata_version,
+			);
+
+			let (debug_info_builder, debug_compile_unit) = module.create_debug_info_builder(
+				false,
+				inkwell::debug_info::DWARFSourceLanguage::C,
+				path.file_name().unwrap().to_str().unwrap(),
+				path.parent().unwrap().to_str().unwrap(),
+				"pseudo-compiler",
+				false, // TODO: actually reflect whether it's optimized or not
+				"",
+				0,
+				"",
+				inkwell::debug_info::DWARFEmissionKind::Full,
+				0,
+				false,
+				false,
+				"",
+				"",
+			);
+
+			let debug_main_function_type = debug_info_builder.create_subroutine_type(
+				debug_compile_unit.get_file(),
+				None,
+				&[],
+				0,
+			);
+
+			let debug_main_function = debug_info_builder.create_function(
+				debug_compile_unit.as_debug_info_scope(),
+				"main",
+				None,
+				debug_compile_unit.get_file(),
+				0,
+				debug_main_function_type,
+				false,
+				true,
+				0,
+				0,
+				false,
+			);
+
 			// external libc functions
 			let printf_fn = module.add_function(
 				"printf",
@@ -548,6 +618,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 			// main_fn
 			let main_fn = module.add_function("main", context.i64_type().fn_type(&[], false), None);
+			main_fn.set_subprogram(debug_main_function);
 
 			// variables
 			let variables_builder = context.create_builder();
@@ -573,7 +644,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				fail_block
 			};
 
-			let compiler = Self {
+			let mut compiler = Self {
 				context,
 				module,
 
@@ -589,23 +660,26 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				exit_fn,
 
 				fail_block,
+
+				debug_info_builder,
+				debug_compile_unit,
+				debug_main_function,
 			};
+
+			let program = parse::parse(code)?;
+			{
+				let location = Location::new(0, 0);
+				compiler.variables_builder.set_current_debug_location(compiler.get_debug_location(&location));
+			}
+			compiler.compile_parsed(&program)?;
+
 			compiler
 		})
 	}
 
-	pub fn compile(
-		&mut self,
-		code: &'src str,
-	) -> Result<(), CompilerError> {
-		let program = parse::parse(code)?;
-		self.compile_parsed(&program)?;
-		Ok(())
-	}
-	
 	fn compile_parsed(
 		&mut self,
-		instructions: &Vec<Instructiune<'src>>,
+		instructions: &Vec<InstructiuneNode<'src>>,
 	) -> Result<(), CompilerError> {
 		let start_block = self.context.append_basic_block(self.main_fn, "start");
 
@@ -615,6 +689,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 		self.builder.build_return(Some(&self.context.i64_type().const_int(0, false)))?;
 		self.variables_builder.build_unconditional_branch(start_block)?;
 
+		self.debug_info_builder.finalize();
 		self.module.verify().map_err(VerificationError::from)?;
 
 		Ok(())
@@ -676,6 +751,17 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 }
 
 impl<'src, 'ctx> Compiler<'src, 'ctx> {
+	fn get_debug_location(&self, location: &Location) -> inkwell::debug_info::DILocation<'ctx> {
+		let debug_location = self.debug_info_builder.create_debug_location(
+			self.context,
+			location.line(),
+			location.column(),
+			self.debug_main_function.as_debug_info_scope(),
+			None,
+		);
+		debug_location
+	}
+	
 	fn get_variable(&mut self, lvalue: &Lvalue<'src>) -> Result<Variable<'ctx>, CompilerError> {
 		Ok({
 			let key = lvalue.0;

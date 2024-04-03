@@ -80,13 +80,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 		panic!("Need at least one of --object, --executable, or --llvm-ir.");
 	}
 	
-	let mut program_file = File::open(args.source_path).unwrap();
+	let mut program_file = File::open(&args.source_path).unwrap();
 	let mut code = String::new();
 	program_file.read_to_string(&mut code).unwrap();
 
 	let context = interpretor_core::Context::create();
-	let mut compiler = interpretor_core::Compiler::new(&context).unwrap();
-	compiler.compile(&code).unwrap();
+	let compiler = interpretor_core::Compiler::compile(&context, &code, &args.source_path).unwrap();
 
 	if args.object {
 		compiler.write_object(args.destination_path, args.opt.into()).unwrap();

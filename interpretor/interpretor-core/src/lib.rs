@@ -135,7 +135,7 @@ impl parse::ParsingError {
 				// 			format!("{:?}", expected),
 				// 	}
 				// }
-				ExpectedMegatron(..) => todo!(),
+				ExpectedSomethingElse(..) => todo!(),
 				MismatchedParens => todo!(),
 				UnclosedLParen => todo!(),
 				UnclosedRParen => todo!(),

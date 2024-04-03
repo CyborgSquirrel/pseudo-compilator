@@ -7,7 +7,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use crate::ast::{
 	Instructiune,
 	ScrieParam,
-	FloatRvalue, BoolRvalue,
+	FloatRvalue, BoolRvalue, Node, InstructiuneNode,
 };
 
 pub const EPSILON: f32 = 0.000001;
@@ -52,7 +52,7 @@ fn bool_evaluate<'a>(
 
 use std::iter::Peekable;
 pub struct Runner<'a, 'b> {
-	stack: Vec<(StackData, Peekable<std::slice::Iter<'a, Instructiune<'b>>>)>,
+	stack: Vec<(StackData, Peekable<std::slice::Iter<'a, InstructiuneNode<'b>>>)>,
 	instructions_executed: usize,
 }
 
@@ -98,7 +98,7 @@ pub enum RuntimeState {
 }
 
 impl<'a, 'b> Runner<'a, 'b> {
-	pub fn new(instructions: &'a Vec<Instructiune<'b>>) -> Self {
+	pub fn new(instructions: &'a Vec<InstructiuneNode<'b>>) -> Self {
 		Self {
 			stack: vec![ (StackData::Nothing, instructions.iter().peekable()) ],
 			instructions_executed: 0,
@@ -118,7 +118,7 @@ impl<'a, 'b> Runner<'a, 'b> {
 			}
 			if let Some((data, last)) = self.stack.last_mut() {
 				let instruction = last.peek().unwrap();
-				match instruction {
+				match &instruction.inner {
 					Instructiune::Atribuire(lvalue, rvalue) => {
 						variables.assign(lvalue.0, float_evaluate(variables, rvalue)?);
 						last.next();

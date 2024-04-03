@@ -3,11 +3,10 @@ pub mod expression;
 use trace::{trace, init_depth_var};
 init_depth_var!();
 
-use expression::*;
 use crate::ast::{
 	Instructiune,
 	ScrieParam,
-	Lvalue, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop};
+	Lvalue, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop, Node, Location, InstructiuneNode};
 use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -41,7 +40,7 @@ pub enum LineParsingErrorKind {
 	ExpectedBoolRvalue,
 	ExpectedNonrecursiveInstruction,
 	
-	ExpectedMegatron(expression::ExpectingFlags),
+	ExpectedSomethingElse(expression::ExpectingFlags),
 	MismatchedParens,
 	UnclosedLParen,
 	UnclosedRParen,
@@ -61,33 +60,61 @@ pub type LineParsingResult<T> = Result<T, LineParsingError>;
 
 #[derive(Debug, Clone, Copy)]
 struct LineCursor<'a> {
+	pub line: usize,
+	pub index_offset: usize,
+	
 	pub code: &'a str,
 	pub index: usize,
 	pub grapheme: usize,
 }
+
 impl<'a> LineCursor<'a> {
-	fn new(code: &'a str) -> Self {
-		Self { code, index: 0, grapheme: 0 }
+	fn new(code: &'a str, line: usize, index_offset: usize) -> Self {
+		Self {
+			line,
+			index_offset,
+			code,
+			index: 0,
+			grapheme: 0,
+		}
 	}
+
 	fn make_error<T: Into<LineParsingErrorKind>>(&self, kind: T) -> LineParsingError {
 		LineParsingError(self.grapheme, kind.into())
 	}
+
+	fn make_node<T>(&self, inner: T) -> Node<T> {
+		Node {
+			inner,
+			location: Location::new(
+				self.line as u32,
+				self.index_offset as u32 + self.index as u32,
+			),
+		}
+	}
+
 	fn code(&self) -> &'a str {
 		&self.code[self.index..]
 	}
+
 	fn code_until(&self, until: usize) -> &'a str {
 		&self.code[self.index..self.index+until]
 	}
+
 	fn advance_by(&mut self, amount: usize) {
 		self.grapheme += self.code_until(amount).graphemes(true).count();
 		self.index += amount;
 	}
+
 	fn expect_str(mut self, expected: &'static str) -> LineParsingIntermediateResult<'a, ()> {
 		if self.code().starts_with(expected) {
 			self.advance_by(expected.len());
 			Ok((self, ()))
-		} else { Err(self.make_error(LineParsingErrorKind::ExpectedStr(expected))) }
+		} else {
+			Err(self.make_error(LineParsingErrorKind::ExpectedStr(expected)))
+		}
 	}
+
 	fn expect_str_optional_diacritics(mut self, expected: &'static str) -> LineParsingIntermediateResult<'a, ()> {
 		let mut graphemes = self.code().graphemes(true);
 		let mut expected_graphemes = expected.graphemes(true);
@@ -118,6 +145,7 @@ impl<'a> LineCursor<'a> {
 		
 		Ok((self, ()))
 	}
+
 	fn skip_spaces(mut self) -> Self {
 		let (graphemes, offset) =
 			self.code().grapheme_indices(true)
@@ -132,6 +160,7 @@ impl<'a> LineCursor<'a> {
 		self.index += offset;
 		self
 	}
+
 	fn read_while<P: FnMut(&str) -> bool>(mut self, mut predicate: P) -> (Self, &'a str) {
 		let (graphemes, offset) =
 			self.code().grapheme_indices(true)
@@ -147,6 +176,7 @@ impl<'a> LineCursor<'a> {
 		self.index += offset;
 		(self, result)
 	}
+
 	fn read_one(mut self) -> Option<(Self, &'a str)> {
 		let one = self.code().grapheme_indices(true).next();
 		if let Some((_, one)) = one {
@@ -155,18 +185,21 @@ impl<'a> LineCursor<'a> {
 			Some((self, one))
 		} else { None }
 	}
+
 	fn parse_lvalue(self) -> LineParsingIntermediateResult<'a, Lvalue<'a>> {
 		let (new_self, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
 		if !name.is_empty() {
 			Ok((new_self, Lvalue(name)))
 		} else { Err(self.make_error(LineParsingErrorKind::ExpectedLvalue)) }
 	}
+
 	fn expect_end(self) -> LineParsingResult<()> {
 		if self.code.len() == self.index {
 			Ok(())
 		} else { Err(self.make_error(LineParsingErrorKind::ExpectedEnd)) }
 	}
-	fn parse_second_step_citeste(mut self) -> LineParsingIntermediateResult<'a, Instructiune<'a>> {
+
+	fn parse_second_step_citeste(mut self, old_self: Self) -> LineParsingIntermediateResult<'a, InstructiuneNode<'a>> {
 		let mut lvalues = Vec::new();
 		let mut done = false;
 		while !done {
@@ -180,8 +213,9 @@ impl<'a> LineCursor<'a> {
 				Err(..) => done = true,
 			}
 		}
-		Ok((self, Instructiune::Citeste(lvalues)))
+		Ok((self, old_self.make_node(Instructiune::Citeste(lvalues))))
 	}
+
 	fn next_grapheme(mut self) -> LineParsingIntermediateResult<'a, &'a str> {
 		let grapheme = self.code()
 			.graphemes(true)
@@ -192,6 +226,7 @@ impl<'a> LineCursor<'a> {
 			Ok((self, grapheme))
 		} else { Err(self.make_error(LineParsingErrorKind::ExpectedAnyGrapheme)) }
 	}
+
 	fn expect_grapheme(self, expected_grapheme: &'static str) -> LineParsingIntermediateResult<'a, ()> {
 		let err = LineParsingErrorKind::ExpectedGrapheme(expected_grapheme);
 		if let Ok((new_self, grapheme)) = self.next_grapheme() {
@@ -199,6 +234,7 @@ impl<'a> LineCursor<'a> {
 			else { Err(self.make_error(err)) }
 		} else { Err(self.make_error(err)) }
 	}
+
 	fn parse_scrie_param(self) -> LineParsingIntermediateResult<'a, ScrieParam<'a>> {
 		match self.next_grapheme().map_err(|_| self.make_error(LineParsingErrorKind::ExpectedScrieParam))? {
 			(new_self, "'") => {
@@ -217,7 +253,10 @@ impl<'a> LineCursor<'a> {
 			}
 		}
 	}
-	fn parse_second_step_scrie(mut self) -> LineParsingIntermediateResult<'a, Instructiune<'a>> {
+
+	// TODO: The debug locations for all second_step type functions are wrong. Fix that...
+
+	fn parse_second_step_scrie(mut self, old_self: Self) -> LineParsingIntermediateResult<'a, InstructiuneNode<'a>> {
 		let mut params = Vec::new();
 		let mut done = false;
 		while !done {
@@ -229,21 +268,21 @@ impl<'a> LineCursor<'a> {
 				Err(..) => done = true,
 			}
 		}
-		Ok((self, Instructiune::Scrie(params)))
+		Ok((self, old_self.make_node(Instructiune::Scrie(params))))
 	}
 	
-	fn parse_second_step_lvalue(self, lvalue: Lvalue<'a>) -> LineParsingIntermediateResult<'a, Instructiune<'a>> {
+	fn parse_second_step_lvalue(self, old_self: Self, lvalue: Lvalue<'a>) -> LineParsingIntermediateResult<'a, InstructiuneNode<'a>> {
 		let (new_self, _) = self.skip_spaces().expect_str("<-")?;
 		if let Ok((new_self, _)) = new_self.expect_grapheme(">") {
 			let (new_self, other_lvalue) = new_self.skip_spaces().parse_lvalue()?;
-			Ok((new_self, Instructiune::Interschimbare(lvalue, other_lvalue)))
+			Ok((new_self, old_self.make_node(Instructiune::Interschimbare(lvalue, other_lvalue))))
 		} else {
 			let (new_self, rvalue) = new_self.skip_spaces().parse_float_rvalue()?;
-			Ok((new_self, Instructiune::Atribuire(lvalue, rvalue)))
+			Ok((new_self, old_self.make_node(Instructiune::Atribuire(lvalue, rvalue))))
 		}
 	}
 	
-	fn parse_second_step_pentru(self) -> LineParsingResult<Instructiune<'a>> {
+	fn parse_second_step_pentru(self, old_self: Self) -> LineParsingResult<InstructiuneNode<'a>> {
 		let (new_self, lvalue) = self.skip_spaces().parse_lvalue()?;
 		let (new_self, _) = new_self.skip_spaces().expect_str("<-")?;
 		let (new_self, start) = new_self.skip_spaces().parse_float_rvalue()?;
@@ -258,32 +297,34 @@ impl<'a> LineCursor<'a> {
 		let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("execută")?;
 		new_self.skip_spaces().expect_end()?;
 		
-		Ok(Instructiune::PentruExecuta(lvalue, start, end, increment, Vec::new()))
+		Ok(old_self.make_node(Instructiune::PentruExecuta(lvalue, start, end, increment, Vec::new())))
 	}
 	
-	fn parse_second_step_daca(self) -> LineParsingResult<Instructiune<'a>> {
+	fn parse_second_step_daca(self, old_self: Self) -> LineParsingResult<InstructiuneNode<'a>> {
 		let (new_self, rvalue) = self.skip_spaces().parse_bool_rvalue()?;
 		let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("atunci")?;
 		new_self.skip_spaces().expect_end()?;
 		
-		Ok(Instructiune::DacaAtunciAltfel(rvalue, Vec::new(), None))
+		Ok(old_self.make_node(Instructiune::DacaAtunciAltfel(rvalue, Vec::new(), None)))
 	}
 	
-	fn parse_second_step_cat_timp(self) -> LineParsingResult<Instructiune<'a>> {
+	fn parse_second_step_cat_timp(self, old_self: Self) -> LineParsingResult<InstructiuneNode<'a>> {
 		let (new_self, _) = self.expect_str_optional_diacritics(" timp ")?;
 		let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
 		let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("execută")?;
 		new_self.skip_spaces().expect_end()?;
 		
-		Ok(Instructiune::CatTimpExecuta(rvalue, Vec::new()))
+		Ok(old_self.make_node(Instructiune::CatTimpExecuta(rvalue, Vec::new())))
 	}
 	
-	fn parse_pana_cand(self, instructions: Vec<Instructiune<'a>>) -> LineParsingResult<Instructiune<'a>> {
+	fn parse_pana_cand(self, instructions: Vec<InstructiuneNode<'a>>) -> LineParsingResult<InstructiuneNode<'a>> {
+		let old_self = self;
+
 		let (new_self, _) = self.expect_str_optional_diacritics("până când ")?;
 		let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
 		new_self.skip_spaces().expect_end()?;
 		
-		Ok(Instructiune::RepetaPanaCand(instructions, rvalue))
+		Ok(old_self.make_node(Instructiune::RepetaPanaCand(instructions, rvalue)))
 	}
 	
 	fn parse_altfel(self) -> LineParsingResult<()> {
@@ -298,45 +339,48 @@ impl<'a> LineCursor<'a> {
 		Ok(())
 	}
 	
-	fn parse_nonrecursive_instructions(mut self, mut name: &'a str) -> LineParsingResult<Vec<Instructiune<'a>>> {
+	fn parse_nonrecursive_instructions(mut self, mut old_self: Self, mut name: &'a str) -> LineParsingResult<Vec<InstructiuneNode<'a>>> {
 		let mut done = false;
 		let mut instructions = Vec::new();
 		while !done {
-			// dbg!(self.grapheme);
 			let (new_self, instruction) = match name {
 				"daca"|"dacă"|"cat"|"cât"|"pentru" =>
 					Err(self.make_error(LineParsingErrorKind::ExpectedNonrecursiveInstruction)),
 				"scrie" =>
-					self.parse_second_step_scrie(),
+					self.parse_second_step_scrie(old_self),
 				"citeste"|"citește" =>
-					self.parse_second_step_citeste(),
+					self.parse_second_step_citeste(old_self),
 				x =>
-					self.parse_second_step_lvalue(Lvalue(x)),
+					self.parse_second_step_lvalue(old_self, Lvalue(x)),
 			}?;
 			instructions.push(instruction);
 			self = new_self.skip_spaces();
 			if let Ok((new_self, _)) = self.expect_grapheme(";") {
 				self = new_self.skip_spaces();
+				old_self = self;
 				let (new_self, new_name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
 				self = new_self;
 				name = new_name;
-			} else { done = true }
+			} else {
+				done = true;
+			}
 		}
 		self.skip_spaces().expect_end()?;
 		Ok(instructions)
 	}
 	
-	fn parse(self) -> LineParsingResult<Vec<Instructiune<'a>>> {
+	fn parse(self) -> LineParsingResult<Vec<InstructiuneNode<'a>>> {
+		let old_self = self;
 		let (new_self, name) = self.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
 		match name {
 			"daca"|"dacă" =>
-				Ok(vec![new_self.parse_second_step_daca()?]),
+				Ok(vec![new_self.parse_second_step_daca(old_self)?]),
 			"cat"|"cât" =>
-				Ok(vec![new_self.parse_second_step_cat_timp()?]),
+				Ok(vec![new_self.parse_second_step_cat_timp(old_self)?]),
 			"pentru" =>
-				Ok(vec![new_self.parse_second_step_pentru()?]),
+				Ok(vec![new_self.parse_second_step_pentru(old_self)?]),
 			_ =>
-				new_self.parse_nonrecursive_instructions(name),
+				new_self.parse_nonrecursive_instructions(old_self, name),
 		}
 	}
 }
@@ -367,6 +411,7 @@ impl<'a> Cursor<'a> {
 	fn new(code: &'a str) -> Self {
 		Self { code, line: 0, index: 0 }
 	}
+
 	fn next_line(mut self) -> Option<(Self, &'a str)> {
 		if let Some((offset, _)) = self.code[self.index..].grapheme_indices(true)
 			.find(|(_, grapheme)| *grapheme == "\n") {
@@ -379,8 +424,11 @@ impl<'a> Cursor<'a> {
 			self.index = self.code.len();
 			self.line += 1;
 			Some((self, line))
-		} else { None }
+		} else {
+			None
+		}
 	}
+
 	fn make_error_from_line(&self, line_parsing_error: LineParsingError) -> ParsingError {
 		ParsingError(
 			self.line,
@@ -388,11 +436,13 @@ impl<'a> Cursor<'a> {
 			ParsingErrorKind::LineParsingError(line_parsing_error.1)
 		)
 	}
+
 	fn make_error(&self, kind: ParsingErrorKind) -> ParsingError {
 		ParsingError(self.line, 0, kind)
 	}
-	fn parse(mut self, instructions: &mut Vec<Instructiune<'a>>, indent: usize) -> IntermediateParsingResult<'a> {
-		enum Expecting<'a> { Anything, PanaCand(Vec<Instructiune<'a>>) }
+
+	fn parse(mut self, instructions: &mut Vec<InstructiuneNode<'a>>, indent: usize) -> IntermediateParsingResult<'a> {
+		enum Expecting<'a> { Anything, PanaCand(Vec<InstructiuneNode<'a>>) }
 		let mut expecting = Expecting::Anything;
 		while let Some((new_self, line)) = self.next_line() {
 			let current_indent = line
@@ -407,9 +457,10 @@ impl<'a> Cursor<'a> {
 				}
 				std::cmp::Ordering::Equal => {
 					self = new_self;
-					let line = &line[current_indent*"\t".len()..];
-					let line_cursor = LineCursor::new(line);
-					if line != "" {
+					let index_offset = current_indent*"\t".len();
+					let line_str = &line[index_offset..];
+					let line_cursor = LineCursor::new(line_str, self.line, index_offset);
+					if line_str != "" {
 						expecting = match expecting {
 							// pana cand
 							Expecting::PanaCand(pana_cand_instructions) => {
@@ -430,7 +481,7 @@ impl<'a> Cursor<'a> {
 							Expecting::Anything => {
 								// altfel
 								if line_cursor.parse_altfel().is_ok() {
-									if let Some(Instructiune::DacaAtunciAltfel(_, _, instructions)) = instructions.last_mut() {
+									if let Some(Instructiune::DacaAtunciAltfel(_, _, instructions)) = instructions.last_mut().map(Node::inner_mut) {
 										if instructions.is_some() { return Err(self.make_error(ParsingErrorKind::DacaAlreadyHasAltfel)) }
 										*instructions = Some({
 											let mut instructions = Vec::new();
@@ -440,7 +491,9 @@ impl<'a> Cursor<'a> {
 											}
 											instructions
 										});
-									} else { return Err(self.make_error(ParsingErrorKind::AltfelWithoutDaca)) }
+									} else {
+										return Err(self.make_error(ParsingErrorKind::AltfelWithoutDaca))
+									}
 									
 									Expecting::Anything
 								}
@@ -457,11 +510,11 @@ impl<'a> Cursor<'a> {
 								else {
 									let mut parsed_instructions = line_cursor.parse()
 										.map_err(|err| self.make_error_from_line(err))?;
-									match &mut parsed_instructions[..] {
-										[ Instructiune::DacaAtunciAltfel(_, instructions, _) ]
-										| [ Instructiune::CatTimpExecuta(_, instructions) ]
-										| [ Instructiune::PentruExecuta(_, _, _, _, instructions) ]
-										| [ Instructiune::RepetaPanaCand(instructions, _) ] => {
+									match parsed_instructions.get_mut(0).map(Node::inner_mut) {
+										Some(Instructiune::DacaAtunciAltfel(_, instructions, _)) 
+										| Some(Instructiune::CatTimpExecuta(_, instructions)) 
+										| Some(Instructiune::PentruExecuta(_, _, _, _, instructions)) 
+										| Some(Instructiune::RepetaPanaCand(instructions, _))  => {
 											self = self.parse(instructions, indent+1)?;
 											if instructions.is_empty() {
 												return Err(self.make_error(ParsingErrorKind::EmptyBlock));
@@ -475,7 +528,9 @@ impl<'a> Cursor<'a> {
 								}
 							}
 						}
-					} else { self = new_self }
+					} else {
+						self = new_self
+					}
 				}
 			}
 		}
@@ -488,7 +543,7 @@ impl<'a> Cursor<'a> {
 	}
 }
 
-pub fn parse<'a>(code: &'a str) -> ParsingResult<Vec<Instructiune<'a>>> {
+pub fn parse<'a>(code: &'a str) -> ParsingResult<Vec<InstructiuneNode<'a>>> {
 	let mut program = Vec::new();
 	let cursor = Cursor::new(&code);
 	cursor.parse(&mut program, 0).map(|_| program)
@@ -527,7 +582,7 @@ mod tests {
 		ParsingError(
 			1, 15,
 			LineParsingError(
-				ExpectedMegatron(
+				ExpectedSomethingElse(
 					make_bitflags!(Expecting::{PrefixUnop | Rvalue})))),
 		r#"scrie   4141+  "#
 	}
@@ -537,7 +592,7 @@ mod tests {
 		ParsingError(
 			1, 16,
 			LineParsingError(
-				ExpectedMegatron(
+				ExpectedSomethingElse(
 					make_bitflags!(Expecting::{Rvalue})))),
 		r#"scrie   4141+-  "#
 	}
@@ -556,7 +611,7 @@ mod tests {
 		ParsingError(
 			1, 7,
 			LineParsingError(
-				ExpectedMegatron(
+				ExpectedSomethingElse(
 					make_bitflags!(Expecting::{Rvalue})))),
 		r#"scrie ++41+1"#
 	}
@@ -566,7 +621,7 @@ mod tests {
 		ParsingError(
 			1, 4,
 			LineParsingError(
-				ExpectedMegatron(
+				ExpectedSomethingElse(
 					make_bitflags!(Expecting::{PrefixUnop | Rvalue})))),
 		r#"a<-()"#
 	}

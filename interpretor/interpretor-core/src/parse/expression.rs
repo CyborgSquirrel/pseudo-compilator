@@ -347,7 +347,7 @@ impl<'a> Parser<'a> {
 			// dbg!(&self.operators);
 		}
 		if !self.expecting.contains(Expecting::Operator) {
-			Err(self.cursor.make_error(LineParsingErrorKind::ExpectedMegatron(self.expecting)))
+			Err(self.cursor.make_error(LineParsingErrorKind::ExpectedSomethingElse(self.expecting)))
 		} else {
 			while !self.operators.is_empty() {
 				self.eval_top_operation()?;

@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path, process::Command};
 
 use itertools::{Itertools, izip};
 
-use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, IntValue}, builder::{Builder, BuilderError}, module::Module, AddressSpace, OptimizationLevel, llvm_sys::LLVMCallConv, basic_block::BasicBlock, FloatPredicate, targets::{InitializationConfig, Target, RelocMode, CodeModel, FileType}, IntPredicate, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram}};
+use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, IntValue}, builder::{Builder, BuilderError}, module::Module, AddressSpace, OptimizationLevel, llvm_sys::LLVMCallConv, basic_block::BasicBlock, FloatPredicate, targets::{InitializationConfig, Target, RelocMode, CodeModel, FileType}, IntPredicate, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}};
 
 use crate::{ast::{Instructiune, FloatRvalue, FloatUnop, FloatBinop, ScrieParam, Lvalue, BoolRvalue, BoolFloatBinop, BoolBoolBinop, InstructiuneNode, Location}, runtime::EPSILON, parse};
 
@@ -519,6 +519,7 @@ pub struct Compiler<'src, 'ctx> {
 	debug_info_builder: DebugInfoBuilder<'ctx>,
 	debug_compile_unit: DICompileUnit<'ctx>,
 	debug_main_function: DISubprogram<'ctx>,
+	debug_type: DIType<'ctx>,
 }
 
 impl<'src, 'ctx> Compiler<'src, 'ctx> {
@@ -644,6 +645,13 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				fail_block
 			};
 
+			let debug_type = debug_info_builder.create_basic_type(
+				"f64",
+				64,
+				0x04, // float type, source: https://dwarfstd.org/doc/DWARF5.pdf#section.7.8
+				0,
+			).unwrap().as_type();
+
 			let mut compiler = Self {
 				context,
 				module,
@@ -664,6 +672,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				debug_info_builder,
 				debug_compile_unit,
 				debug_main_function,
+				debug_type,
 			};
 
 			let program = parse::parse(code)?;
@@ -779,6 +788,24 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 					name.push_str(key);
 					self.variables_builder.build_alloca(self.context.i64_type(), name.as_str())?
 				};
+
+				let debug_variable = self.debug_info_builder.create_auto_variable(
+					self.debug_main_function.as_debug_info_scope(),
+					key,
+					self.debug_compile_unit.get_file(),
+					0,
+					self.debug_type,
+					true,
+					0,
+					0,
+				);
+				self.debug_info_builder.insert_declare_at_end(
+					value,
+					Some(debug_variable),
+					None,
+					self.get_debug_location(&Location::new(0, 0)),
+					self.variables_builder.get_insert_block().unwrap(),
+				);
 
 				let value = Variable {
 					value,

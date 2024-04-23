@@ -36,3 +36,22 @@
     transform: rotate(360deg);
   }
 }
+
+@keyframes cursor-blink {
+  0% {
+    color: black;
+  }
+  50% {
+    color: transparent;
+  }
+  100% {
+    color: black;
+  }
+}
+
+.cursor {
+  animation-name: cursor-blink;
+  animation-duration: 2s;
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+}

@@ -4,28 +4,51 @@ import CodeMirror, { Decoration, DecorationSet, EditorView, GutterMarker, ReactC
 import { indentUnit } from '@codemirror/language'
 import axios from 'axios';
 import { BsPlayFill, BsFillStopFill } from "react-icons/bs";
+import CommandLine from './CommandLine';
 
 const endpoint = "localhost:8000";
 
-const emptyMarker = new class extends GutterMarker {
-  toDOM() {
-    const node = document.createElement("span");
-    node.innerText = "●";
-    node.style.color = "red";
-    return node;
-  }
-}
+const removeLineErrors = StateEffect.define();
 
-const addLineHighlight = StateEffect.define();
+const addLineError = StateEffect.define<{from: number}>({
+  map: ({from}, change) => ({from: change.mapPos(from)})
+});
 
-const lineHighlightMark = Decoration.line({
-  attributes: {style: 'background-color: #d2ffff'},
+const lineErrorMark = Decoration.line({
+  attributes: {
+    style:
+        "text-decoration-style: wavy;"
+      + "text-decoration-line: underline;"
+      + "text-decoration-thickness: 1px;"
+      + "text-decoration-color: red;"
+  },
+});
+
+const lineErrorField = StateField.define({
+  create() {
+    return Decoration.none;
+  },
+  update(lines, tr) {
+    lines = lines.map(tr.changes);
+    for (let e of tr.effects) {
+      if (e.is(removeLineErrors)) {
+        lines = Decoration.none;
+      }
+      if (e.is(addLineError)) {
+        lines = lines.update({add: [lineErrorMark.range(e.value.from)]});
+      }
+    }
+    return lines;
+  },
+  provide: (f) => EditorView.decorations.from(f),
 });
 
 function App() {
-  const instance = axios.create({
-    baseURL: `http://${endpoint}`,
-  });
+  const instance = React.useMemo(() => {
+    return axios.create({
+      baseURL: `http://${endpoint}`,
+    });
+  }, [endpoint]);
 
   const [jobId, setJobId] = React.useState<null|number>(null);
   const [error, setError] = React.useState<null|any>(null);
@@ -38,119 +61,29 @@ function App() {
   }, []);
 
   const editorRef = React.useRef<null|ReactCodeMirrorRef>(null);
-  const emptyLineGutter = gutter({
-    lineMarker(view, line) {
-      console.log(error);
-      if (error === null) return null;
-      const lineNumber = view.state.doc.lineAt(line.from).number;
-      if (lineNumber !== error.line) return null;
-      return emptyMarker;
-    },
-    initialSpacer: () => emptyMarker
-  });
 
-  // const lineHighlightField = StateField.define({
-  //   create() {
-  //     return Decoration.none;
-  //   },
-  //   update(lines, tr) {
-  //     lines = lines.map(tr.changes);
-  //     for (let e of tr.effects) {
-  //       if (e.is(addLineHighlight)) {
-  //         lines = Decoration.none;
-  //         lines = lines.update({add: [lineHighlightMark.range(e.value)]});
-  //       }
-  //     }
-  //     return lines;
-  //   },
-  //   provide: (f) => EditorView.decorations.from(f),
-  // });
+  const [commandLineValue, setCommandLineValue] = useState("");
+  const commandLineRef = React.useRef<null|HTMLDivElement>(null);
 
   React.useEffect(() => {
-    console.log(error);
-    if (error === null) return;
-    setValueOutput(error.message);
-    // let effects = [];
-    // effects.push(addUnderline.of({from: 1, to: 10}));
-    // effects.push(StateEffect.appendConfig.of([emptyLineGutter]))
-    // editorRef.current?.view?.dispatch({effects});
-  }, [error, valueCode]);
-  
-  const inputRef = React.useRef<null|HTMLDivElement>(null);
-
-  function ensureSelection() {
-    const input = inputRef.current;
-    if (input === null) return;
-
-    const firstChild = input.firstChild;
-    if (firstChild === null) {
-      console.warn("invalid state");
-      return;
-    }
-    const textLength = firstChild.nodeValue?.length;
-    if (textLength === undefined) {
-      console.warn("invalid state");
-      return;
+    if (error !== null) {
+      setValueOutput(error.message);
     }
 
-    let range = new Range();
-    range.setStart(firstChild, textLength);
-    range.setEnd(firstChild, textLength);
-
-    const selection = document.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  }
-
-  function ensureInputText() {
-    const input = inputRef.current;
-    if (input === null) return;
-
-    let text = "";
-    for (const node of Array.from(input.childNodes)) {
-      if (node.nodeType === document.TEXT_NODE) {
-        if (node.textContent !== null) {
-          text = text.concat(node.textContent);
-        }
+    const editor = editorRef.current;
+    if (editor !== null && editor.view !== undefined && editor.state !== undefined) {
+      editor.view.dispatch({
+        effects: [removeLineErrors.of(null)],
+      });
+      if (error !== null) {
+        const line = editor.view.state.doc.line(error.line);
+        editor.view.dispatch({
+          effects: [addLineError.of({from: line.from})],
+        });
       }
-      node.remove();
     }
+  }, [error]);
 
-    text = text.replaceAll("\n", "");
-    const node = document.createTextNode("");
-    node.nodeValue = text;
-    input.appendChild(node);
-  }
-
-  function ensureInputCursor() {
-    const input = inputRef.current;
-    if (input === null) return;
-
-    const cursors = input.getElementsByClassName("cursor");
-    if (cursors.length !== 1) {
-      if (cursors.length > 1) {
-        for (const cursor of Array.from(cursors)) {
-          cursor.remove();
-        }
-      }
-
-      const node = document.createElement("span");
-      node.textContent = "█";
-      node.classList.add("cursor");
-      node.style.userSelect = "none";
-
-      let before = input.firstChild?.nextSibling;
-      if (before === undefined) before = null;
-      
-      input.insertBefore(node, before);
-    }
-  }
-
-  React.useEffect(() => {
-    ensureInputText();
-    ensureInputCursor();
-  }, []);
-  
   const outputRef = React.useRef<null|HTMLDivElement>(null);
   const [valueOutput, setValueOutput] = React.useState("");
 
@@ -200,13 +133,6 @@ function App() {
           display: "flex",
           flexDirection: "column",
           backgroundColor: "#f5f5f5",
-
-          // borderRight: "1px",
-          // borderLeft: "0",
-          // borderTop: "0",
-          // borderBottom: "0",
-          // borderStyle: "solid",
-          // borderColor: "black",
         }}
       >
         <BsPlayFill
@@ -215,11 +141,6 @@ function App() {
             setJobId(null);
             setError(null);
 
-            // const code = editorRef.current?.state?.doc.toString();
-            // const code = editorRef.current?.editor?.nodeValue;
-            console.log(editorRef);
-            console.log(editorRef.current?.state);
-            
             const response = await instance.post("/job", {code: valueCode});
             const data = response.data;
 
@@ -298,8 +219,7 @@ function App() {
 
               extensions={[
                 indentUnit.of("\t"),
-                emptyLineGutter,
-                // lineHighlightField,
+                lineErrorField,
               ]}
               indentWithTab={true}
 
@@ -338,8 +258,8 @@ function App() {
               overflowY: "auto",
             }}
             onClick={(_event) => {
-              if (inputRef.current === null) return;
-              inputRef.current.focus();
+              if (commandLineRef.current === null) return;
+              commandLineRef.current.focus();
             }}
           >
             <div
@@ -349,72 +269,26 @@ function App() {
                 overflowY: "auto",
               }}
             >{valueOutput}</div>
-            <div
-              ref={inputRef}
-              spellCheck={false}
-              contentEditable={true}
+            <CommandLine
               style={{
                 flexGrow: 1,
                 flexBasis: "auto",
-                
-                caretColor: "transparent",
-                padding: "0",
-                border: "0",
-                width: "100%",
-                minHeight: "2ch",
-                whiteSpace: "break-spaces",
               }}
-              onSelect={(event) => {
-                event.preventDefault();
-              }}
-              onBeforeInput={(_event) => {
-                ensureInputText();
-                ensureSelection();
-              }}
-              onInput={(event) => {
-                ensureInputText();
-                ensureSelection();
-                ensureInputCursor();
-              }}
-              onKeyDown={(event) => {
-                if (
-                    event.key === "ArrowUp"
-                  || event.key === "ArrowDown"
-                  || event.key === "ArrowLeft"
-                  || event.key === "ArrowRight"
-                ) {
-                  event.preventDefault();
+              ref={commandLineRef}
+              value={commandLineValue}
+              setValue={setCommandLineValue}
+              onSubmit={(value) => {
+                if (socket === null) {
+                  return;
                 }
-                
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (socket === null) {
-                    return;
-                  }
-                  const input = inputRef.current;
-                  if (input === null) {
-                    return;
-                  }
 
-                  const firstChild = input.firstChild;
-                  if (firstChild === null) {
-                    console.warn("invalid state");
-                    return;
+                setCommandLineValue("");
+                socket.send(JSON.stringify({
+                  message: {
+                    type: "stdin",
+                    stdin: `${value}\n`,
                   }
-                  const text = firstChild.nodeValue;
-                  if (text === undefined) {
-                    console.warn("invalid state");
-                    return;
-                  }
-                  socket.send(JSON.stringify({
-                    message: {
-                      type: "stdin",
-                      stdin: `${text}\n`,
-                    }
-                  }));
-
-                  firstChild.nodeValue = "";
-                }
+                }));
               }}
             />
           </div>

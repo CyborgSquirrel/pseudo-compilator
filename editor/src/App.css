@@ -49,9 +49,30 @@
   }
 }
 
-.cursor {
+.aj-command-line {
+  caret-color: transparent;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  min-height: 2ch;
+  white-space: break-spaces;
+}
+
+.aj-command-line:focus {
+  outline: none;
+}
+
+.aj-command-line.aj-active::after {
+  content: '█';
   animation-name: cursor-blink;
   animation-duration: 2s;
   animation-iteration-count: infinite;
   animation-timing-function: ease-in-out;
+}
+
+.aj-command-line:not(.aj-active)::after {
+  content: '█';
+  color: transparent;
+  -webkit-text-stroke: 1px;
+  -webkit-text-stroke-color: black;
 }

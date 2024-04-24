@@ -2,6 +2,9 @@ import asyncio
 import codecs
 import dataclasses
 import itertools
+import json
+import logging
+import os
 import pathlib
 import shutil
 import typing
@@ -15,6 +18,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.environ.get("LOG_LEVEL"))
 
 COMPILER_PATH = pathlib.Path("/home/andrei/pseudo-interpretor/interpretor/target/debug/pseudo-interpretor")
 
@@ -58,6 +64,20 @@ job_ids = itertools.count()
 jobs: dict[int, Job] = dict()
 
 
+class JobResponseSuccess(pydantic.BaseModel):
+    type: typing.Literal["success"]
+    job_id: int
+
+
+class JobResponseFailure(pydantic.BaseModel):
+    type: typing.Literal["failure"]
+    error: typing.Any
+
+
+class JobResponse(pydantic.BaseModel):
+    message: typing.Union[JobResponseSuccess, JobResponseFailure] = pydantic.Field(..., discriminator="type")
+
+
 class JobEndpoint(HTTPEndpoint):
     class Post(pydantic.BaseModel):
         code: str
@@ -76,6 +96,7 @@ class JobEndpoint(HTTPEndpoint):
         process = await asyncio.subprocess.create_subprocess_exec(
             str(COMPILER_PATH),
             "--executable",
+            "--output", "json",
             str(job.code_path),
             str(job.executable_path),
             stdout=asyncio.subprocess.PIPE,
@@ -87,10 +108,10 @@ class JobEndpoint(HTTPEndpoint):
             shutil.rmtree(job.state_path)
             del jobs[job.id]
 
-            return JSONResponse(dict(err="Compiler error", value=stdout.decode()))
+            return JSONResponse(dict(message=dict(type="failure", error=json.loads(stdout))))
         job.status = "compiled"
         
-        return JSONResponse(dict(job_id=job.id))
+        return JSONResponse(dict(message=dict(type="success", job_id=job_id)))
 
 
 class ReceiveStdin(pydantic.BaseModel):
@@ -160,11 +181,19 @@ class JobStatusEndpoint(WebSocketEndpoint):
         job = jobs[job_id]
 
         parsed_data: Receive = Receive.parse_obj(data)
+        logger.info("job %s %s", job_id, parsed_data.message.type)
         match parsed_data.message.type:
             case "stdin":
                 job.process.stdin.write(parsed_data.message.stdin.encode())
+                await job.process.stdin.drain()
             case "stop":
                 job.process.kill()
+
+    async def on_disconnect(self, websocket: WebSocket, data):
+        job_id = int(websocket.path_params["job_id"])
+        if (job := jobs.get(job_id)) is not None:
+            del jobs[job_id]
+            shutil.rmtree(job.state_path)
 
 
 routes = [

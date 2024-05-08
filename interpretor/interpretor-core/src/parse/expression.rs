@@ -183,15 +183,15 @@ impl<'a> Parser<'a> {
 	
 	// #[trace]
 	fn try_float_rvalue(&mut self) -> Result<bool> {
-		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), GraphemeKind::Other));
 		let rvalue = match unwrap_or_return!(name.graphemes(true).next(), Ok(false)) {
 			"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => match name.parse() {
 				Ok(literal) => FloatRvalue::Literal(literal),
 				Err(..) => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatLiteral)),
 			}
 			_ => match name {
-				"atunci"|"executa"|"execută"
-					=> return Err(self.cursor.make_error(LineParsingErrorKind::InvalidLvalueName)),
+				"daca"|"dacă"|"cat"|"cât"|"pentru"
+					=> return Err(self.cursor.make_error(LineParsingErrorKind::InvalidLvalueName(String::from(name)))),
 				_ => FloatRvalue::Lvalue(Lvalue(name)),
 			}
 		};
@@ -308,7 +308,7 @@ impl<'a> Parser<'a> {
 	
 	// #[trace]
 	fn try_bool_bool_binop(&mut self) -> Result<bool> {
-		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), Some(GraphemeKind::Other)));
+		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), GraphemeKind::Other));
 		let op = match name {
 			"sau" => BoolBoolBinop::Or,
 			"si"|"și" => BoolBoolBinop::And,
@@ -326,8 +326,6 @@ impl<'a> Parser<'a> {
 	// #[trace]
 	fn parse_expecting(&mut self) -> Result<bool> {
 		self.cursor = self.cursor.skip_spaces();
-		// dbg!(self.cursor.code());
-		
 		// NOTE: I took advantage of short-circuiting here to make
 		// the code a bit terser (and arguably more understandable).
 		Ok(    (self.expecting.contains(Expecting::PrefixUnop) && self.try_prefix_float_unop())
@@ -343,9 +341,7 @@ impl<'a> Parser<'a> {
 	
 	// #[trace]
 	fn parse(mut self) -> LineParsingIntermediateResult<'a, BoolOrFloatRvalue<'a>> {
-		while self.parse_expecting()? {
-			// dbg!(&self.operators);
-		}
+		while self.parse_expecting()? { }
 		if !self.expecting.contains(Expecting::Operator) {
 			Err(self.cursor.make_error(LineParsingErrorKind::ExpectedSomethingElse(self.expecting)))
 		} else {

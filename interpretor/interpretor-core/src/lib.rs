@@ -3,7 +3,7 @@ mod runtime;
 mod ast;
 mod compiler;
 
-pub use compiler::Compiler;
+pub use compiler::{Compiler, CompilerError};
 pub use inkwell::{context::Context, OptimizationLevel};
 
 pub fn interpret<Reader: std::io::BufRead, Writer: std::io::Write>(
@@ -50,7 +50,7 @@ impl InterpretingError {
 }
 
 impl parse::ParsingError {
-	fn make_string(&self) -> String {
+	pub fn make_string(&self) -> String {
 		use parse::{
 			ParsingErrorKind::*, LineParsingErrorKind::*,
 		};
@@ -71,8 +71,6 @@ impl parse::ParsingError {
 					format!("în această poziție ar fi trebuit să apară „{}”.", string),
 				ExpectedStrOptionalDiacritics(string) =>
 					format!("în această poziție ar fi trebuit să apară „{}” (cu sau fără diacritice).", string),
-				ExpectedGrapheme(grapheme) =>
-					format!("în această poziție ar fi trebuit să apară „{}”.", grapheme),
 				ExpectedAnyGrapheme =>
 					format!("în această poziție ar fi trebuit să apară un caracter."),
 				ExpectedEnd =>
@@ -80,76 +78,39 @@ impl parse::ParsingError {
 				ExpectedLvalue =>
 					format!("aici ar fi trebuit să apară o variabilă."),
 				ExpectedScrieParam =>
-					format!("aici ar fi trebuit să apară o variabilă, o expresie, un caracter ('...'), sau un șir de caractere (\"...\")."),
+					format!("aici ar fi trebuit să apară o expresie, un caracter ('.'), sau un șir de caractere (\"...\")."),
 				ExpectedFloatRvalue =>
 					format!("aici ar fi trebuit să apară o expresie."),
 				ExpectedBoolRvalue =>
 					format!("aici ar fi trebuit să apară o condiție."),
 				ExpectedNonrecursiveInstruction =>
 					format!("aici ar fi trebuit să apară o atribuire, interschimbare, sau o instrucțiune de tip scrie sau citește."),
-				// TokenParsingError(err) => {
-				// 	use parse::expression::TokenParsingError::*;
-				// 	match err {
-				// 		InvalidFloatLiteral(literal) =>
-				// 			format!("`{}` nu este un număr valid.", literal),
-				// 		InvalidOperator(operator) =>
-				// 			format!("`{}` nu este un operator valid.", operator),
-				// 	}
-				// }
-				// ExpressionConstructionError(err) => {
-				// 	use parse::expression::ExpressionConstructionError::*;
-				// 	match err {
-				// 		MismatchedParens =>
-				// 			format!("parantezele nu se potrivesc."),
-				// 		UnclosedRparen =>
-				// 			format!("parantezei închise nu i se potrivește o paranteză deschisă."),
-				// 		UnclosedLparen =>
-				// 			format!("parantezei deschise nu i se potrivește o paranteză închisă."),
-				// 		MissingOperand =>
-				// 			format!("aici ar trebui să apară un operand."),
-				// 		InvalidUnaryOpOperands(op) => {
-				// 			use parse::expression::BoolOrFloatUnaryOp;
-				// 			match op {
-				// 				BoolOrFloatUnaryOp::BoolUnaryOp(..) =>
-				// 					panic!(),
-				// 				BoolOrFloatUnaryOp::FloatUnaryOp(op) =>
-				// 					format!("operația `{}` poate fi efectuată doar pe o expresie.", op.get_str()),
-				// 			}
-				// 		}
-				// 		InvalidBinaryOpOperands(op) => {
-				// 			use parse::expression::BoolOrFloatBinaryOp;
-				// 			use syntax::BoolBinaryOp;
-				// 			match op {
-				// 				BoolOrFloatBinaryOp::BoolBinaryOp(op) =>
-				// 					match op {
-				// 						BoolBinaryOp::BoolBoolBinaryOp(op) =>
-				// 							format!("operația `{}` poate fi efectuată doar pe două condiții.", op.get_str()),
-				// 						BoolBinaryOp::BoolFloatBinaryOp(op) =>
-				// 							format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
-				// 					}
-				// 				BoolOrFloatBinaryOp::FloatBinaryOp(op) =>
-				// 					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
-				// 			}
-				// 		}
-				// 		ExpectationError(expected) =>
-				// 			format!("{:?}", expected),
-				// 	}
-				// }
-				ExpectedSomethingElse(..) => todo!(),
-				MismatchedParens => todo!(),
-				UnclosedLParen => todo!(),
-				UnclosedRParen => todo!(),
-				InvalidLvalueName => todo!(),
-				InvalidFloatLiteral => todo!(),
+
+				ExpectedSomethingElse(expecting) => {
+					assert!(expecting.contains(parse::expression::Expecting::Rvalue));
+					format!("aici ar fi trebuit să apară o valoare.")
+				}
+				MismatchedParens =>
+					format!("parantezele nu corespund."),
+				UnclosedLParen =>
+					format!("paranteza stângă nu are paranteză dreaptă corespunzătoare."),
+				UnclosedRParen =>
+					format!("paranteza dreaptă nu are paranteză stângă corespunzătoare."),
+				InvalidLvalueName(name) =>
+					format!("nume de variabilă nevalid „{}”.", name),
+				InvalidFloatLiteral => format!("număr nevalid."),
+
+				InvalidLvalueNameOrKeyword(value) =>
+					format!("nume de variabilă sau cuvânt cheie nevalid „{}”.", value),
 				
 				InvalidFloatUnopOperands(op) =>
-					format!("operația `{}` poate fi efectuată doar pe o expresie.", op.get_str()),
+					format!("operația „{}” poate fi efectuată doar pe o expresie.", op.get_str()),
 				InvalidFloatBinopOperands(op) =>
-					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
+					format!("operația „{}” poate fi efectuată doar pe două expresii.", op.get_str()),
 				InvalidBoolFloatBinopOperands(op) =>
-					format!("operația `{}` poate fi efectuată doar pe două expresii.", op.get_str()),
+					format!("operația „{}” poate fi efectuată doar pe două expresii.", op.get_str()),
 				InvalidBoolBoolBinopOperands(op) =>
-					format!("operația `{}` poate fi efectuată doar pe două condiții.", op.get_str()),
+					format!("operația „{}” poate fi efectuată doar pe două condiții.", op.get_str()),
 			},
 		})
 	}

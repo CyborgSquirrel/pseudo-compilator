@@ -631,6 +631,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				let fail_block = context.append_basic_block(main_fn, "fail");
 				builder.position_at_end(fail_block);
 			
+				// TODO: Include name of variable, and line of code.
 				let args = [
 					builder.build_global_string_ptr("Variabila nu are nici o valoare!\n", "")?.as_pointer_value().into(),
 				];
@@ -786,7 +787,9 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 					let mut name = String::new();
 					name.push_str("is_set_");
 					name.push_str(key);
-					self.variables_builder.build_alloca(self.context.i64_type(), name.as_str())?
+					let alloca = self.variables_builder.build_alloca(self.context.i64_type(), name.as_str())?;
+					self.variables_builder.build_store(alloca, self.context.i64_type().const_zero())?;
+					alloca
 				};
 
 				let debug_variable = self.debug_info_builder.create_auto_variable(

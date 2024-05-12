@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::fmt::Display;
 use std::process::ExitCode;
 use std::{fs::File, io::Read};

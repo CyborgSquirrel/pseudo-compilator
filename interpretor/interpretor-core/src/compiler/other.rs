@@ -1,4 +1,4 @@
-use inkwell::{values::FunctionValue, module::Module, context::Context, AddressSpace, llvm_sys::LLVMCallConv, types::{StructType, BasicType}};
+use inkwell::{values::FunctionValue, module::Module, context::Context, AddressSpace, llvm_sys::LLVMCallConv, types::StructType};
 
 pub use interpretor_sys::VariableKind;
 

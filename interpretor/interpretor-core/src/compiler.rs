@@ -7,7 +7,7 @@ use interpretor_sys::VariableKind;
 
 use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, basic_block::BasicBlock, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}, FloatPredicate};
 
-use crate::{ast::{Ident, InstructiuneNode, Location, FloatRvalue}, parse};
+use crate::{ast::{Ident, InstructiuneNode, Location}, parse};
 
 use self::{other::External, error::{VerificationError, CompilerResult}, variable::Variable};
 

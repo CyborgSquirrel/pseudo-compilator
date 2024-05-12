@@ -5,7 +5,7 @@ use itertools::{Itertools, izip};
 
 use inkwell::{values::{PointerValue, AnyValue}, FloatPredicate};
 
-use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue, Lvalue}, runtime::EPSILON, Compiler};
+use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue, Lvalue}, Compiler, EPSILON};
 
 use super::{Compile, lvalue::CompileLvalue};
 

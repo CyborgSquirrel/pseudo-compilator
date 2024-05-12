@@ -105,8 +105,6 @@ impl<'src, 'ctx> Variable<'ctx> {
 
 	    	compiler.builder.position_at_end(merge_block);
 			}
-
-			()
 		})
 	}
 }
@@ -156,8 +154,6 @@ impl<'src, 'ctx> SetVariable<'ctx> {
 			compiler.builder.build_conditional_branch(cmp, merge_block, compiler.fail_type_error)?;
 
 			compiler.builder.position_at_end(merge_block);
-			
-			()
 		})
 	}
 

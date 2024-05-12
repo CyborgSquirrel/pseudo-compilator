@@ -37,6 +37,16 @@ pub unsafe extern "C" fn pseudo_list_len(list: List) -> f64 {
 	(**list).len() as f64
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn pseudo_list_insert(mut list: List, index: f64, value: f64) {
+	(**list).insert(index as usize, value);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pseudo_list_remove(mut list: List, index: f64) {
+	(**list).remove(index as usize);
+}
+
 #[repr(C)]
 pub union VariableInner {
 	float: f64,

@@ -39,8 +39,10 @@ pub type InstructiuneNode<'src> = Node<Instructiune<'src>>;
 pub enum Instructiune<'src> {
 	Atribuire(Lvalue<'src>, AtribuireRvalue<'src>),
 	Interschimbare(Lvalue<'src>, Lvalue<'src>),
+	Insereaza(Ident<'src>, FloatRvalue<'src>, FloatRvalue<'src>),
+	Sterge(Ident<'src>, FloatRvalue<'src>),
 	Scrie(Vec<ScrieParam<'src>>),
-	Citeste(Vec<Ident<'src>>),
+	Citeste(Vec<Lvalue<'src>>),
 	DacaAtunciAltfel(BoolRvalue<'src>, Vec<InstructiuneNode<'src>>, Option<Vec<InstructiuneNode<'src>>>),
 	CatTimpExecuta(BoolRvalue<'src>, Vec<InstructiuneNode<'src>>),
 	PentruExecuta(Ident<'src>, FloatRvalue<'src>, FloatRvalue<'src>, Option<FloatRvalue<'src>>, Vec<InstructiuneNode<'src>>),

@@ -478,10 +478,8 @@ impl<'a> Parser<'a> {
 impl<'a> LineCursor<'a> {
 	pub fn parse_float_rvalue(self) -> LineParsingIntermediateResult<'a, FloatRvalue<'a>> {
 		Ok({
-			let rvalue = self.parse_rvalue()?;
-			let (new_self, Operand::FloatRvalue(rvalue)) = rvalue else {
-				return Err(self.make_error(LineParsingErrorKind::ExpectedFloatRvalue));
-			};
+			let (new_self, rvalue) = self.parse_rvalue()?;
+			let rvalue = rvalue.into_float().unwrap(); // TODO: Type check
 			(new_self, rvalue)
 		})
 	}

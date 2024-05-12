@@ -14,6 +14,8 @@ pub struct External<'ctx> {
 	pub pseudo_list_get_item: FunctionValue<'ctx>,
 	pub pseudo_list_set_item: FunctionValue<'ctx>,
 	pub pseudo_list_len: FunctionValue<'ctx>,
+	pub pseudo_list_insert: FunctionValue<'ctx>,
+	pub pseudo_list_remove: FunctionValue<'ctx>,
 
 	pub variable: StructType<'ctx>,
 	pub variable_float: StructType<'ctx>,
@@ -150,6 +152,35 @@ impl<'ctx> External<'ctx> {
 		);
 		pseudo_list_len.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
 
+		// pseudo_list_insert
+		let pseudo_list_insert = module.add_function(
+			"pseudo_list_insert",
+			context.f64_type().fn_type(
+				&[
+					context.i8_type().ptr_type(AddressSpace::default()).into(),
+					context.f64_type().into(),
+					context.f64_type().into(),
+				],
+				false,
+			),
+			None,
+		);
+		pseudo_list_insert.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
+
+		// pseudo_list_remove
+		let pseudo_list_remove = module.add_function(
+			"pseudo_list_remove",
+			context.f64_type().fn_type(
+				&[
+					context.i8_type().ptr_type(AddressSpace::default()).into(),
+					context.f64_type().into(),
+				],
+				false,
+			),
+			None,
+		);
+		pseudo_list_remove.set_call_conventions(LLVMCallConv::LLVMCCallConv as u32);
+
 		// Variable
 		let variable = context.struct_type(
 			&[
@@ -186,6 +217,8 @@ impl<'ctx> External<'ctx> {
 			pseudo_list_get_item,
 			pseudo_list_set_item,
 			pseudo_list_len,
+			pseudo_list_insert,
+			pseudo_list_remove,
 
 			variable,
 			variable_float,

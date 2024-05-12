@@ -174,8 +174,9 @@ impl<'a, 'b> Runner<'a, 'b> {
 									value
 								} else { return Ok(RuntimeState::WaitingForInput) };
 								
-								let value = value.parse().map_err(|_| RuntimeError::InputParsingError(value.clone()))?;
-								variables.assign(lvalues[*index].0, value);
+								// let value = value.parse().map_err(|_| RuntimeError::InputParsingError(value.clone()))?;
+								// variables.assign(lvalues[*index].0, value);
+								unimplemented!();
 								
 								*index += 1;
 							}
@@ -244,6 +245,7 @@ impl<'a, 'b> Runner<'a, 'b> {
 						}
 						Ok(RuntimeState::Running)
 					}
+					_ => todo!(),
 				}
 			} else {
 				Ok(RuntimeState::Finished)

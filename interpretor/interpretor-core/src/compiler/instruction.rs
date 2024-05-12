@@ -5,7 +5,7 @@ use itertools::{Itertools, izip};
 
 use inkwell::{values::{PointerValue, AnyValue}, FloatPredicate};
 
-use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue}, runtime::EPSILON, Compiler};
+use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue, Lvalue}, runtime::EPSILON, Compiler};
 
 use super::{Compile, lvalue::CompileLvalue};
 
@@ -163,11 +163,6 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 						"scrie_printf"
 					)?;
 				}
-				Instructiune::Atribuire(lvalue, rvalue) => {
-					let rvalue_ptr = rvalue.compile(compiler)?;
-					let rvalue = compiler.builder.build_load(compiler.external.variable, rvalue_ptr, "load_rvalue")?.into_struct_value();
-					lvalue.compile_store(compiler, rvalue)?;
-				}
 				Instructiune::Citeste(lvalues) => {
 					let mut args = Vec::new();
 
@@ -186,7 +181,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 
 					let allocas: Vec<_> = (
 						lvalues.iter()
-						.map(|lvalue| compiler.builder.build_alloca(compiler.context.f64_type(), lvalue.0))
+						.map(|_| compiler.builder.build_alloca(compiler.context.f64_type(), ""))
 						.collect::<Result<_, _>>()
 					)?;
 					
@@ -200,19 +195,55 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 						"citeste_scanf"
 					)?;
 
-					for (ident, alloca) in izip!(lvalues, allocas) {
+					for (lvalue, alloca) in izip!(lvalues, allocas) {
 						let value = compiler.builder.build_load(compiler.context.f64_type(), alloca, "")?.into_float_value();
 						let value_ptr = compiler.build_float_struct(value)?;
 						let struct_ = compiler.builder.build_load(compiler.external.variable_float, value_ptr, "load_struct")?.into_struct_value();
-						let x = compiler.variable(ident)?;
-						x.build_store(compiler, struct_)?;
+						lvalue.compile_store(compiler, struct_)?;
 					}
+				}
+				Instructiune::Atribuire(lvalue, rvalue) => {
+					let rvalue_ptr = rvalue.compile(compiler)?;
+					let rvalue = compiler.builder.build_load(compiler.external.variable, rvalue_ptr, "load_rvalue")?.into_struct_value();
+					lvalue.compile_store(compiler, rvalue)?;
 				}
 				Instructiune::Interschimbare(x, y) => {
 					let x_val = x.compile_load(compiler)?;
 					let y_val = y.compile_load(compiler)?;
 					x.compile_store(compiler, y_val)?;
 					y.compile_store(compiler, x_val)?;
+				}
+				Instructiune::Insereaza(list, index, value) => {
+					let index = index.compile(compiler)?;
+					let value = value.compile(compiler)?;
+					let list = compiler.variable(list)?.build_set_check(compiler)?.build_load_list(compiler)?;
+
+					compiler.build_list_range_check(list, index, compiler.context.f64_type().const_float(1.0))?;
+
+					compiler.builder.build_call(
+						compiler.external.pseudo_list_insert,
+						&[
+							list.into(),
+							index.into(),
+							value.into(),
+						],
+						"pseudo_list_insert",
+					)?;
+				}
+				Instructiune::Sterge(list, index) => {
+					let index = index.compile(compiler)?;
+					let list = compiler.variable(list)?.build_set_check(compiler)?.build_load_list(compiler)?;
+
+					compiler.build_list_range_check(list, index, compiler.context.f64_type().const_zero())?;
+
+					compiler.builder.build_call(
+						compiler.external.pseudo_list_remove,
+						&[
+							list.into(),
+							index.into(),
+						],
+						"pseudo_list_remove",
+					)?;
 				}
 				Instructiune::DacaAtunciAltfel(conditie, atunci, altfel) => {
 					let atunci_block = compiler.context.append_basic_block(compiler.main_fn, "atunci");

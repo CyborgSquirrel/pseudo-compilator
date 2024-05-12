@@ -364,6 +364,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 		&self,
 		list: PointerValue<'ctx>,
 		index: FloatValue<'ctx>,
+		upper_bound_add: FloatValue<'ctx>,
 	) -> CompilerResult<()> {
 		Ok({
 			// index < 0
@@ -398,6 +399,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 					"pseudo_list_len",
 				)?;
 				let list_len = call.as_any_value_enum().into_float_value();
+				let list_len = self.builder.build_float_add(list_len, upper_bound_add, "tmp_add")?;
 
 				let index_gt_len = self.builder.build_float_compare(
 					FloatPredicate::OGE,
@@ -414,8 +416,6 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 				self.builder.position_at_end(merge_block);
 			}
-			
-			()
 		})
 	}
 }

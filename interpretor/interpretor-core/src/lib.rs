@@ -73,8 +73,6 @@ impl parse::ParsingError {
 					format!("în această poziție ar fi trebuit să apară „{}” (cu sau fără diacritice).", string),
 				ExpectedAnyGrapheme =>
 					format!("în această poziție ar fi trebuit să apară un caracter."),
-				ExpectedEnd =>
-					format!("până aici ar fi trebuit să se termine linia de cod."),
 				ExpectedIdent =>
 					format!("aici ar fi trebuit să apară un nume de variabilă."),
 				ExpectedScrieParam =>
@@ -85,6 +83,11 @@ impl parse::ParsingError {
 					format!("aici ar fi trebuit să apară o condiție."),
 				ExpectedBlocklessInstruction =>
 					format!("aici ar fi trebuit să apară o atribuire, interschimbare, sau o instrucțiune de tip scrie sau citește."),
+
+				ExpectedEnd =>
+					format!("până aici ar fi trebuit să se termine linia de cod."),
+				ExpectedEndOfBlocklessInstruction =>
+					format!("până aici ar fi trebuit să se termine instrucțiunea."),
 
 				ExpectedSomethingElse(expecting) => {
 					assert!(expecting.contains(parse::expression::Expecting::Rvalue));
@@ -99,7 +102,8 @@ impl parse::ParsingError {
 				InvalidIdent(name) =>
 					format!("nume de variabilă nevalid „{}”.", name),
 				InvalidFloatLiteral => format!("număr nevalid."),
-				InvalidFunction(name) => todo!(),
+				InvalidFunction(name) =>
+					format!("nume de funcție nevalid „{}”.", name),
 
 				InvalidWord(value) =>
 					format!("nume de variabilă sau cuvânt cheie nevalid „{}”.", value),

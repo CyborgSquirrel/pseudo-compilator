@@ -12,6 +12,21 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for FloatRvalue<'src> {
 		Ok(
 			match self {
 				FloatRvalue::Literal(x) => compiler.context.f64_type().const_float(*x as f64),
+				FloatRvalue::ListLength(list) => {
+					let list = list.compile(compiler)?;
+					
+	  			// call function to get list length
+					let call = compiler.builder.build_call(
+						compiler.external.pseudo_list_len,
+						&[
+							list.into(),
+						],
+						"pseudo_list_len",
+					)?;
+					let list_len = call.as_any_value_enum().into_float_value();
+
+					list_len
+				}
 				FloatRvalue::Unop(unop, x) => {
 					let x = x.compile(compiler)?;
 					match unop {

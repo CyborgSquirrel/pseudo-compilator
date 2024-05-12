@@ -1,6 +1,5 @@
 use enumflags2::{bitflags, BitFlags, make_bitflags};
 
-use trace::trace;
 trace::init_depth_var!();
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -38,14 +37,14 @@ pub enum BoolOrFloatBinop {
 }
 
 #[derive(Debug)]
-pub enum Operand<'a> {
-	Ident(Ident<'a>),
-	BoolRvalue(BoolRvalue<'a>),
-	FloatRvalue(FloatRvalue<'a>),
+pub enum Operand<'src> {
+	Ident(Ident<'src>),
+	BoolRvalue(BoolRvalue<'src>),
+	FloatRvalue(FloatRvalue<'src>),
 }
 
-impl<'a> Operand<'a> {
-	pub fn into_bool(self) -> Option<BoolRvalue<'a>> {
+impl<'src> Operand<'src> {
+	pub fn into_bool(self) -> Option<BoolRvalue<'src>> {
 		Some(
 			match self {
 				Operand::BoolRvalue(value) => value,
@@ -54,7 +53,7 @@ impl<'a> Operand<'a> {
 		)
 	}
 
-	pub fn into_float(self) -> Option<FloatRvalue<'a>> {
+	pub fn into_float(self) -> Option<FloatRvalue<'src>> {
 		Some(
 			match self {
 				Operand::FloatRvalue(value) => value,
@@ -64,10 +63,19 @@ impl<'a> Operand<'a> {
 		)
 	}
 
-	pub fn into_list(self) -> Option<ListRvalue<'a>> {
+	pub fn into_list(self) -> Option<ListRvalue<'src>> {
 		Some(
 			match self {
 				Operand::Ident(value) => ListRvalue::Lvalue(ListLvalue::Variable(value)),
+				_ => return None,
+			}
+		)
+	}
+
+	pub fn into_ident(self) -> Option<Ident<'src>> {
+		Some(
+			match self {
+				Operand::Ident(value) => value,
 				_ => return None,
 			}
 		)
@@ -93,6 +101,7 @@ enum ParenKind {
 	Ident,
 	IntegralPart,
 	Index,
+	FunctionCall,
 }
 
 impl ParenKind {
@@ -102,6 +111,8 @@ impl ParenKind {
 				"(" => {
 					if expecting.contains(Expecting::Rvalue) {
 						ParenKind::Ident
+					} else if expecting.contains(Expecting::Operator) {
+						ParenKind::FunctionCall
 					} else {
 						return None
 					}
@@ -125,6 +136,7 @@ impl ParenKind {
 			(ParenKind::Ident, ")") => true,
 			(ParenKind::IntegralPart, "]") => true,
 			(ParenKind::Index, "]") => true,
+			(ParenKind::FunctionCall, ")") => true,
 			_ => false,
 		}
 	}
@@ -200,7 +212,6 @@ impl<'a> Parser<'a> {
 		}
 	}
 	
-	// #[trace]
 	fn try_prefix_float_unop(&mut self) -> bool {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), false);
 		let op = match grapheme_0 {
@@ -216,7 +227,6 @@ impl<'a> Parser<'a> {
 		true
 	}
 	
-	#[trace]
 	fn try_lparen_unop(&mut self) -> bool {
 		let (new_cursor, lparen_grapheme) = unwrap_or_return!(self.cursor.read_one(), false);
 		let op = unwrap_or_return!(ParenKind::get(self.expecting, lparen_grapheme), false);
@@ -227,7 +237,6 @@ impl<'a> Parser<'a> {
 		true
 	}
 	
-	// #[trace]
 	fn try_rparen_unop(&mut self) -> Result<bool> {
 		let (new_cursor, rparen_grapheme) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
 		let (")"|"]") = rparen_grapheme else {
@@ -264,6 +273,19 @@ impl<'a> Parser<'a> {
 				let x = self.operands.pop().unwrap().into_list().unwrap(); // TODO: type error
 				Operand::FloatRvalue(FloatRvalue::Lvalue(FloatLvalue::ListElement(x, Box::new(y))))
 			}
+			ParenKind::FunctionCall => {
+				let y = self.operands.pop().unwrap();
+				let x = self.operands.pop().unwrap().into_ident().unwrap(); // TODO: type error
+				match x.0 {
+					"lungime" => {
+						let y = y.into_list().unwrap(); // TODO: type error
+						Operand::FloatRvalue(FloatRvalue::ListLength(y))
+					}
+					_ => {
+						return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFunction(String::from(x.0))));
+					}
+				}
+			}
 		};
 		
 		self.operands.push(result);
@@ -272,7 +294,6 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	#[trace]
 	fn try_other(&mut self) -> Result<bool> {
 		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), GraphemeKind::Other));
 		let rvalue = match unwrap_or_return!(name.graphemes(true).next(), Ok(false)) {
@@ -296,7 +317,6 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	// #[trace]
 	fn eval_top_operation(&mut self) -> Result<()> {
 		let op = self.operators.pop().unwrap();
 		let result = match op {
@@ -344,7 +364,6 @@ impl<'a> Parser<'a> {
 		Ok(())
 	}
 	
-	// #[trace]
 	fn eval_while_priority_greater_or_equal(&mut self, priority: u32) -> Result<()> {
 		while self.operators.last().map_or(false, |last| priority <= get_priority(last)) {
 			self.eval_top_operation()?;
@@ -352,7 +371,6 @@ impl<'a> Parser<'a> {
 		Ok(())
 	}
 	
-	// #[trace]
 	fn try_float_binop(&mut self) -> Result<bool> {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
 		let op = match grapheme_0 {
@@ -372,7 +390,6 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	// #[trace]
 	fn try_bool_float_binop(&mut self) -> Result<bool> {
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
 		let (new_cursor, op) = match grapheme_0 {
@@ -403,7 +420,6 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	// #[trace]
 	fn try_bool_bool_binop(&mut self) -> Result<bool> {
 		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), GraphemeKind::Other));
 		let op = match name {
@@ -420,7 +436,6 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	#[trace]
 	fn parse_expecting(&mut self) -> Result<bool> {
 		self.cursor = self.cursor.skip_spaces();
 		// NOTE: I took advantage of short-circuiting here to make the code a bit
@@ -446,7 +461,6 @@ impl<'a> Parser<'a> {
 		)
 	}
 	
-	#[trace]
 	fn parse(mut self) -> LineParsingIntermediateResult<'a, Operand<'a>> {
 		while self.parse_expecting()? { }
 		if !self.expecting.contains(Expecting::Operator) {

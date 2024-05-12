@@ -78,6 +78,7 @@ pub enum LineParsingErrorKind {
 	UnclosedLParen,
 	UnclosedRParen,
 	InvalidIdent(String),
+	InvalidFunction(String),
 	InvalidFloatLiteral,
 
 	InvalidWord(String),

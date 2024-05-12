@@ -83,6 +83,7 @@ pub enum FloatRvalue<'src> {
 	Lvalue(FloatLvalue<'src>),
 	Literal(f32),
 	Unop(FloatUnop, Box<FloatRvalue<'src>>),
+	ListLength(ListRvalue<'src>),
 	Binop(FloatBinop, Box<FloatRvalue<'src>>, Box<FloatRvalue<'src>>),
 }
 

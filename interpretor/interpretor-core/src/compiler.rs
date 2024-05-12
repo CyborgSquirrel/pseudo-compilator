@@ -5,9 +5,9 @@ use std::{collections::HashMap, path::Path};
 
 use interpretor_sys::VariableKind;
 
-use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue}, builder::Builder, module::Module, basic_block::BasicBlock, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}};
+use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, basic_block::BasicBlock, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}, FloatPredicate};
 
-use crate::{ast::{Ident, InstructiuneNode, Location}, parse};
+use crate::{ast::{Ident, InstructiuneNode, Location, FloatRvalue}, parse};
 
 use self::{other::External, error::{VerificationError, CompilerResult}, variable::Variable};
 
@@ -40,6 +40,7 @@ pub struct Compiler<'src, 'ctx> {
 
 	fail_variable_unset: BasicBlock<'ctx>,
 	fail_type_error: BasicBlock<'ctx>,
+	fail_range_error: BasicBlock<'ctx>,
 
 	debug_info_builder: DebugInfoBuilder<'ctx>,
 	debug_compile_unit: DICompileUnit<'ctx>,
@@ -156,6 +157,25 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				block
 			};
 
+			let fail_range_error = {
+				let block = context.append_basic_block(main_fn, "fail_range_error");
+				builder.position_at_end(block);
+
+				// TODO: Include name of variable, and line of code.
+				let args = [
+					builder.build_global_string_ptr("Indicele iese din listă!\n", "")?.as_pointer_value().into(),
+				];
+				builder.build_call(
+					external.printf,
+					args.as_slice(),
+					"error_printf"
+				)?;
+
+				builder.build_call(external.exit, &[context.i64_type().const_int(1, false).into()], "")?;
+				builder.build_return(Some(&context.i64_type().const_int(1, false)))?;
+				block
+			};
+
 			let debug_type = debug_info_builder.create_basic_type(
 				"f64",
 				64,
@@ -177,6 +197,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 				fail_variable_unset,
 				fail_type_error,
+				fail_range_error,
 
 				debug_info_builder,
 				debug_compile_unit,
@@ -336,6 +357,65 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			)?;
 
 			struct_ptr
+		})
+	}
+
+	fn build_list_range_check(
+		&self,
+		list: PointerValue<'ctx>,
+		index: FloatValue<'ctx>,
+	) -> CompilerResult<()> {
+		Ok({
+			// index < 0
+			{
+				let merge_block = self.context.append_basic_block(self.main_fn, "merge");
+
+				let index_lt_zero = self.builder.build_float_compare(
+					FloatPredicate::OLT,
+					index,
+					self.context.f64_type().const_zero(),
+					"index_lt_zero",
+				)?;
+
+				self.builder.build_conditional_branch(
+					index_lt_zero,
+					self.fail_range_error,
+					merge_block,
+				)?;
+
+				self.builder.position_at_end(merge_block);
+			}
+
+			// index >= len
+			{
+				let merge_block = self.context.append_basic_block(self.main_fn, "merge");
+
+				let call = self.builder.build_call(
+					self.external.pseudo_list_len,
+					&[
+						list.into(),
+					],
+					"pseudo_list_len",
+				)?;
+				let list_len = call.as_any_value_enum().into_float_value();
+
+				let index_gt_len = self.builder.build_float_compare(
+					FloatPredicate::OGE,
+					index,
+					list_len,
+					"index_gt_len",
+				)?;
+
+				self.builder.build_conditional_branch(
+					index_gt_len,
+					self.fail_range_error,
+					merge_block,
+				)?;
+
+				self.builder.position_at_end(merge_block);
+			}
+			
+			()
 		})
 	}
 }

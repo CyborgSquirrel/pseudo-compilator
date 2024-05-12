@@ -30,10 +30,10 @@ impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for FloatLvalue<'src> {
 		Ok(match self {
 			FloatLvalue::Variable(_) => unreachable!(),
 			FloatLvalue::ListElement(list, index) => {
-				// TODO: Mandatory range check
-
 				let inner = list.compile(compiler)?;
 				let index = index.compile(compiler)?;
+
+				compiler.build_list_range_check(inner, index)?;
 
 				let value_ptr = compiler.builder.build_alloca(compiler.external.variable, "value_ptr")?;
 				compiler.builder.build_store(value_ptr, value)?;
@@ -63,10 +63,10 @@ impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for FloatLvalue<'src> {
 				x.build_set_check(compiler)?.build_load_float(compiler)?
 			}
 			FloatLvalue::ListElement(list, index) => {
-				// TODO: Mandatory range check
-
 				let inner = list.compile(compiler)?;
 				let index = index.compile(compiler)?;
+
+				compiler.build_list_range_check(inner, index)?;
 
 				let call = compiler.builder.build_call(
 					compiler.external.pseudo_list_get_item,

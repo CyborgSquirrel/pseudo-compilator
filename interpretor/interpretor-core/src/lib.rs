@@ -99,6 +99,7 @@ impl parse::ParsingError {
 				InvalidIdent(name) =>
 					format!("nume de variabilă nevalid „{}”.", name),
 				InvalidFloatLiteral => format!("număr nevalid."),
+				InvalidFunction(name) => todo!(),
 
 				InvalidWord(value) =>
 					format!("nume de variabilă sau cuvânt cheie nevalid „{}”.", value),

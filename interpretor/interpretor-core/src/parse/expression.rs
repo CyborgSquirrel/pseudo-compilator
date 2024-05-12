@@ -6,9 +6,23 @@ trace::init_depth_var!();
 use unicode_segmentation::UnicodeSegmentation;
 use super::{LineCursor, LineParsingIntermediateResult, LineParsingErrorKind, get_grapheme_kind, GraphemeKind};
 use crate::{ast::{
-	Lvalue,
-	FloatUnop, FloatBinop, BoolBinop, FloatRvalue, BoolRvalue, BoolUnop, BoolBoolBinop, BoolFloatBinop
-}, parse::LineParsingError};
+	Ident,
+	FloatUnop, FloatBinop, BoolBinop, FloatRvalue, BoolRvalue, BoolUnop, BoolBoolBinop, BoolFloatBinop, ListRvalue, FloatLvalue, ListLvalue, Lvalue
+}, parse::{LineParsingError, Word}};
+
+macro_rules! any {
+	($value:expr $(,)?) => { $value };
+	($value:expr, $($rest:expr),+ $(,)?) => {
+		$value || any!{$($rest),+}
+	}
+}
+
+macro_rules! all {
+	($value:expr $(,)?) => { $value };
+	($value:expr, $($rest:expr),+ $(,)?) => {
+		$value && all!{$($rest),+}
+	}
+}
 
 // bool and float stuff
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -24,9 +38,40 @@ pub enum BoolOrFloatBinop {
 }
 
 #[derive(Debug)]
-enum BoolOrFloatRvalue<'a> {
+pub enum Operand<'a> {
+	Ident(Ident<'a>),
 	BoolRvalue(BoolRvalue<'a>),
 	FloatRvalue(FloatRvalue<'a>),
+}
+
+impl<'a> Operand<'a> {
+	pub fn into_bool(self) -> Option<BoolRvalue<'a>> {
+		Some(
+			match self {
+				Operand::BoolRvalue(value) => value,
+				_ => return None,
+			}
+		)
+	}
+
+	pub fn into_float(self) -> Option<FloatRvalue<'a>> {
+		Some(
+			match self {
+				Operand::FloatRvalue(value) => value,
+				Operand::Ident(value) => FloatRvalue::Lvalue(FloatLvalue::Variable(value)),
+				_ => return None,
+			}
+		)
+	}
+
+	pub fn into_list(self) -> Option<ListRvalue<'a>> {
+		Some(
+			match self {
+				Operand::Ident(value) => ListRvalue::Lvalue(ListLvalue::Variable(value)),
+				_ => return None,
+			}
+		)
+	}
 }
 
 #[bitflags]
@@ -44,15 +89,57 @@ pub enum Expecting {
 pub type ExpectingFlags = BitFlags<Expecting>;
 
 #[derive(Debug)]
-enum Operator<'a> {
-	ParenUnop(&'a str),
+enum ParenKind {
+	Ident,
+	IntegralPart,
+	Index,
+}
+
+impl ParenKind {
+	fn get(expecting: ExpectingFlags, left: &str) -> Option<Self> {
+		Some(
+			match left {
+				"(" => {
+					if expecting.contains(Expecting::Rvalue) {
+						ParenKind::Ident
+					} else {
+						return None
+					}
+				}
+				"[" => {
+					if expecting.contains(Expecting::Rvalue) {
+						ParenKind::IntegralPart
+					} else if expecting.contains(Expecting::Operator) {
+						ParenKind::Index
+					} else {
+						return None
+					}
+				}
+				_ => return None
+			}
+		)
+	}
+	
+	fn match_right(&self, right: &str) -> bool {
+		match (self, right) {
+			(ParenKind::Ident, ")") => true,
+			(ParenKind::IntegralPart, "]") => true,
+			(ParenKind::Index, "]") => true,
+			_ => false,
+		}
+	}
+}
+
+#[derive(Debug)]
+enum Operator {
+	ParenOp(ParenKind),
 	PrefixUnop(BoolOrFloatUnop),
 	Binop(BoolOrFloatBinop),
 }
 
 fn get_priority(operator: &Operator) -> u32 {
 	match operator {
-		Operator::ParenUnop(..) => 0,
+		Operator::ParenOp(..) => 0,
 		Operator::PrefixUnop(..) => 1,
 		Operator::Binop(op) => match op {
 			BoolOrFloatBinop::BoolBinop(op) => match op {
@@ -82,10 +169,12 @@ fn get_priority(operator: &Operator) -> u32 {
 }
 
 struct Parser<'a> {
+	parse_bool: bool,
+	
 	cursor: LineCursor<'a>,
 	expecting: ExpectingFlags,
-	operands: Vec<BoolOrFloatRvalue<'a>>,
-	operators: Vec<Operator<'a>>,
+	operands: Vec<Operand<'a>>,
+	operators: Vec<Operator>,
 }
 
 type Result<T> = std::result::Result<T, LineParsingError>;
@@ -100,8 +189,10 @@ macro_rules! unwrap_or_return {
 }
 
 impl<'a> Parser<'a> {
-	fn new(cursor: LineCursor<'a>) -> Self {
+	fn new(cursor: LineCursor<'a>, parse_bool: bool) -> Self {
 		Self {
+			parse_bool,
+			
 			cursor,
 			expecting: make_bitflags!(Expecting::{PrefixUnop | Rvalue}),
 			operands: Vec::new(),
@@ -125,16 +216,12 @@ impl<'a> Parser<'a> {
 		true
 	}
 	
-	// #[trace]
+	#[trace]
 	fn try_lparen_unop(&mut self) -> bool {
-		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), false);
-		let op = match grapheme_0 {
-			"(" => "(",
-			"[" => "[",
-			_ => return false,
-		};
+		let (new_cursor, lparen_grapheme) = unwrap_or_return!(self.cursor.read_one(), false);
+		let op = unwrap_or_return!(ParenKind::get(self.expecting, lparen_grapheme), false);
 		
-		self.operators.push(Operator::ParenUnop(op));
+		self.operators.push(Operator::ParenOp(op));
 		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Rvalue});
 		self.cursor = new_cursor;
 		true
@@ -142,61 +229,68 @@ impl<'a> Parser<'a> {
 	
 	// #[trace]
 	fn try_rparen_unop(&mut self) -> Result<bool> {
-		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
-		let op = match grapheme_0 {
-			")" => ")",
-			"]" => "]",
-			_ => return Ok(false),
+		let (new_cursor, rparen_grapheme) = unwrap_or_return!(self.cursor.read_one(), Ok(false));
+		let (")"|"]") = rparen_grapheme else {
+			return Ok(false);
 		};
 		
-		let rparen_op = op;
-		while !self.operators.is_empty()
-			&& !matches!(self.operators.last(), Some(Operator::ParenUnop(..))) {
+		while all!(
+			!self.operators.is_empty(),
+			!matches!(self.operators.last(), Some(Operator::ParenOp(..))),
+		) {
 			self.eval_top_operation()?;
 		}
+
+		let Some(Operator::ParenOp(op)) = self.operators.pop() else {
+			return Err(self.cursor.make_error(LineParsingErrorKind::UnclosedRParen));
+		};
+
+		if !op.match_right(rparen_grapheme) {
+			return Err(self.cursor.make_error(LineParsingErrorKind::MismatchedParens));
+		}
+
+		let result = match op {
+			// if it's an Ident, simply ignore it
+			ParenKind::Ident => {
+				let x = self.operands.pop().unwrap();
+				x
+			}
+			ParenKind::IntegralPart => {
+				let x = self.operands.pop().unwrap().into_float().unwrap(); // TODO: type error
+				Operand::FloatRvalue(FloatRvalue::Unop(FloatUnop::IntegralPart, Box::new(x)))
+			}
+			ParenKind::Index => {
+				let y = self.operands.pop().unwrap().into_float().unwrap(); // TODO: type error
+				let x = self.operands.pop().unwrap().into_list().unwrap(); // TODO: type error
+				Operand::FloatRvalue(FloatRvalue::Lvalue(FloatLvalue::ListElement(x, Box::new(y))))
+			}
+		};
 		
-		if let Some(Operator::ParenUnop(lparen_op)) = self.operators.pop() {
-			let x = self.operands.pop().unwrap();
-			let result = match x {
-				BoolOrFloatRvalue::BoolRvalue(..) => {
-					let _op = match (lparen_op, rparen_op) {
-						("(", ")") => BoolUnop::Ident,
-						_ => return Err(self.cursor.make_error(LineParsingErrorKind::MismatchedParens)),
-					};
-					x
-				}
-				BoolOrFloatRvalue::FloatRvalue(x) => {
-					let op = match (lparen_op, rparen_op) {
-						("(", ")") => FloatUnop::Ident,
-						("[", "]") => FloatUnop::Whole,
-						_ => return Err(self.cursor.make_error(LineParsingErrorKind::MismatchedParens)),
-					};
-					BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Unop(op, Box::new(x)))
-				}
-			};
-			self.operands.push(result);
-			self.expecting = make_bitflags!(Expecting::{Operator});
-			self.cursor = new_cursor;
-			Ok(true)
-		} else { Err(self.cursor.make_error(LineParsingErrorKind::UnclosedRParen)) }
+		self.operands.push(result);
+		self.expecting = make_bitflags!(Expecting::{Operator});
+		self.cursor = new_cursor;
+		Ok(true)
 	}
 	
-	// #[trace]
-	fn try_float_rvalue(&mut self) -> Result<bool> {
+	#[trace]
+	fn try_other(&mut self) -> Result<bool> {
 		let (new_cursor, name) = self.cursor.read_while(|x| matches!(get_grapheme_kind(x), GraphemeKind::Other));
 		let rvalue = match unwrap_or_return!(name.graphemes(true).next(), Ok(false)) {
 			"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => match name.parse() {
-				Ok(literal) => FloatRvalue::Literal(literal),
+				Ok(literal) => Operand::FloatRvalue(FloatRvalue::Literal(literal)),
 				Err(..) => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatLiteral)),
 			}
-			_ => match name {
-				"daca"|"dacă"|"cat"|"cât"|"pentru"
-					=> return Err(self.cursor.make_error(LineParsingErrorKind::InvalidLvalueName(String::from(name)))),
-				_ => FloatRvalue::Lvalue(Lvalue(name)),
+			_ => {
+				let word = Word::from_name(name);
+				if word.is_some() {
+					return Err(self.cursor.make_error(LineParsingErrorKind::InvalidIdent(String::from(name))));
+				} else {
+					Operand::Ident(Ident(name))
+				}
 			}
 		};
 		
-		self.operands.push(BoolOrFloatRvalue::FloatRvalue(rvalue));
+		self.operands.push(rvalue);
 		self.expecting = make_bitflags!(Expecting::{Operator});
 		self.cursor = new_cursor;
 		Ok(true)
@@ -206,16 +300,16 @@ impl<'a> Parser<'a> {
 	fn eval_top_operation(&mut self) -> Result<()> {
 		let op = self.operators.pop().unwrap();
 		let result = match op {
-			Operator::ParenUnop(..) => return Err(self.cursor.make_error(LineParsingErrorKind::UnclosedLParen)),
+			Operator::ParenOp(..) => return Err(self.cursor.make_error(LineParsingErrorKind::UnclosedLParen)),
 			Operator::PrefixUnop(op) => {
 				let x = self.operands.pop().unwrap();
 				match op {
 					// the operation will always be Ident, so we just ignore it
 					BoolOrFloatUnop::BoolUnop(..) => x,
-					BoolOrFloatUnop::FloatUnop(op) => match x {
-						BoolOrFloatRvalue::FloatRvalue(x)
-							=> BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Unop(op, Box::new(x))),
-						_ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatUnopOperands(op))),
+					BoolOrFloatUnop::FloatUnop(op) => {
+						let x = x.into_float().unwrap(); // TODO: type error
+						// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatUnopOperands(op))),
+						Operand::FloatRvalue(FloatRvalue::Unop(op, Box::new(x)))
 					}
 				}
 			}
@@ -223,21 +317,24 @@ impl<'a> Parser<'a> {
 				let y = self.operands.pop().unwrap();
 				let x = self.operands.pop().unwrap();
 				match op {
-					BoolOrFloatBinop::FloatBinop(op) => match (x, y) {
-						(BoolOrFloatRvalue::FloatRvalue(x), BoolOrFloatRvalue::FloatRvalue(y))
-							=> BoolOrFloatRvalue::FloatRvalue(FloatRvalue::Binop(op, Box::new(x), Box::new(y))),
-						_ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatBinopOperands(op))),
+					BoolOrFloatBinop::FloatBinop(op) => {
+						let y = y.into_float().unwrap(); // TODO: type error
+						let x = x.into_float().unwrap(); // TODO: type error
+						// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatBinopOperands(op))),
+						Operand::FloatRvalue(FloatRvalue::Binop(op, Box::new(x), Box::new(y)))
 					}
 					BoolOrFloatBinop::BoolBinop(op) => match op {
-						BoolBinop::BoolFloatBinop(op) => match (x, y) {
-							(BoolOrFloatRvalue::FloatRvalue(x), BoolOrFloatRvalue::FloatRvalue(y))
-								=> BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolFloatBinop(op, x, y)),
-							_ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidBoolFloatBinopOperands(op))),
+						BoolBinop::BoolFloatBinop(op) => {
+							let y = y.into_float().unwrap(); // TODO: type error
+							let x = x.into_float().unwrap(); // TODO: type error
+							// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidBoolFloatBinopOperands(op))),
+							Operand::BoolRvalue(BoolRvalue::BoolFloatBinop(op, x, y))
 						}
-						BoolBinop::BoolBoolBinop(op) => match (x, y) {
-							(BoolOrFloatRvalue::BoolRvalue(x), BoolOrFloatRvalue::BoolRvalue(y))
-								=> BoolOrFloatRvalue::BoolRvalue(BoolRvalue::BoolBoolBinop(op, Box::new(x), Box::new(y))),
-							_ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidBoolBoolBinopOperands(op))),
+						BoolBinop::BoolBoolBinop(op) => {
+							let y = y.into_bool().unwrap(); // TODO: type error
+							let x = x.into_bool().unwrap(); // TODO: type error
+							// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidBoolBoolBinopOperands(op))),
+							Operand::BoolRvalue(BoolRvalue::BoolBoolBinop(op, Box::new(x), Box::new(y)))
 						}
 					}
 				}
@@ -323,24 +420,34 @@ impl<'a> Parser<'a> {
 		Ok(true)
 	}
 	
-	// #[trace]
+	#[trace]
 	fn parse_expecting(&mut self) -> Result<bool> {
 		self.cursor = self.cursor.skip_spaces();
-		// NOTE: I took advantage of short-circuiting here to make
-		// the code a bit terser (and arguably more understandable).
-		Ok(    (self.expecting.contains(Expecting::PrefixUnop) && self.try_prefix_float_unop())
-			|| (self.expecting.contains(Expecting::Rvalue) && self.try_lparen_unop())
-			|| (self.expecting.contains(Expecting::Operator) && self.try_rparen_unop()?)
-			|| (self.expecting.contains(Expecting::Operator) && (
-				   self.try_float_binop()?
-				|| self.try_bool_float_binop()?
-				|| self.try_bool_bool_binop()? ))
-			|| (self.expecting.contains(Expecting::Rvalue) && self.try_float_rvalue()?)
+		// NOTE: I took advantage of short-circuiting here to make the code a bit
+		// terser (and arguably more understandable).
+		Ok(
+			any!(
+			  all!(self.expecting.contains(Expecting::PrefixUnop), self.try_prefix_float_unop()),
+	 			all!(
+	 				self.expecting.intersects(make_bitflags!(Expecting::{Rvalue | Operator})),
+	 				self.try_lparen_unop(),
+	 			),
+				all!(self.expecting.contains(Expecting::Operator), self.try_rparen_unop()?),
+				all!(
+					self.expecting.contains(Expecting::Operator),
+					any!(
+						self.try_float_binop()?,
+						(self.parse_bool && self.try_bool_float_binop()?),
+						(self.parse_bool && self.try_bool_bool_binop()?),
+					),
+				),
+				all!(self.expecting.contains(Expecting::Rvalue), self.try_other()?),
+			)
 		)
 	}
 	
-	// #[trace]
-	fn parse(mut self) -> LineParsingIntermediateResult<'a, BoolOrFloatRvalue<'a>> {
+	#[trace]
+	fn parse(mut self) -> LineParsingIntermediateResult<'a, Operand<'a>> {
 		while self.parse_expecting()? { }
 		if !self.expecting.contains(Expecting::Operator) {
 			Err(self.cursor.make_error(LineParsingErrorKind::ExpectedSomethingElse(self.expecting)))
@@ -356,23 +463,44 @@ impl<'a> Parser<'a> {
 
 impl<'a> LineCursor<'a> {
 	pub fn parse_float_rvalue(self) -> LineParsingIntermediateResult<'a, FloatRvalue<'a>> {
-		let rvalue = self.parse_bool_or_float_rvalue()?;
-		match rvalue {
-			(_, BoolOrFloatRvalue::BoolRvalue(..)) => Err(self.make_error(LineParsingErrorKind::ExpectedFloatRvalue)),
-			(new_self, BoolOrFloatRvalue::FloatRvalue(rvalue)) => Ok((new_self, rvalue)),
-		}
+		Ok({
+			let rvalue = self.parse_rvalue()?;
+			let (new_self, Operand::FloatRvalue(rvalue)) = rvalue else {
+				return Err(self.make_error(LineParsingErrorKind::ExpectedFloatRvalue));
+			};
+			(new_self, rvalue)
+		})
 	}
 	
 	pub fn parse_bool_rvalue(self) -> LineParsingIntermediateResult<'a, BoolRvalue<'a>> {
-		let rvalue = self.parse_bool_or_float_rvalue()?;
-		match rvalue {
-			(_, BoolOrFloatRvalue::FloatRvalue(..)) => Err(self.make_error(LineParsingErrorKind::ExpectedBoolRvalue)),
-			(new_self, BoolOrFloatRvalue::BoolRvalue(rvalue)) => Ok((new_self, rvalue)),
-		}
+		Ok({
+			let rvalue = self.parse_rvalue()?;
+			let (new_self, Operand::BoolRvalue(rvalue)) = rvalue else {
+				return Err(self.make_error(LineParsingErrorKind::ExpectedBoolRvalue));
+			};
+			(new_self, rvalue)
+		})
+	}
+
+	pub fn parse_lvalue(self) -> LineParsingIntermediateResult<'a, Lvalue<'a>> {
+		Ok({
+			let parser = Parser::new(self, false);
+			let (new_self, operand) = parser.parse()?;
+			let lvalue = match operand {
+				Operand::Ident(value) => Lvalue::Unknown(value),
+				Operand::FloatRvalue(value) => match value {
+					FloatRvalue::Lvalue(value) => Lvalue::Float(value),
+					// TODO: Type error, expected lvalue
+					_ => todo!(),
+				}
+				_ => todo!(),
+			};
+			(new_self, lvalue)
+		})
 	}
 	
-	fn parse_bool_or_float_rvalue(self) -> LineParsingIntermediateResult<'a, BoolOrFloatRvalue<'a>> {
-		let parser = Parser::new(self);
+	pub fn parse_rvalue(self) -> LineParsingIntermediateResult<'a, Operand<'a>> {
+		let parser = Parser::new(self, true);
 		parser.parse()
 	}
 }

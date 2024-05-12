@@ -2,8 +2,10 @@
 members = [
   "interpretor-core",
   "interpretor-cli",
+  "interpretor-sys",
   # "interpretor-wasm",
 ]
 
 [workspace.dependencies]
 interpretor-core = { path = "./interpretor-core" }
+interpretor-sys = { path = "./interpretor-sys" }

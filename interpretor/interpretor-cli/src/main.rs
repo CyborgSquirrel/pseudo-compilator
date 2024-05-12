@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::fmt::Display;
+use std::process::ExitCode;
 use std::{fs::File, io::Read};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use clap::builder::PossibleValue;
 
 #[derive(Debug, Clone)]
@@ -52,6 +53,19 @@ impl Display for OptimizationLevel {
   }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Output { Text, Json }
+
+impl Display for Output {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+    	Output::Text => f.write_str("text")?,
+    	Output::Json => f.write_str("json")?,
+    }
+    Ok(())
+  }
+}
+
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -72,9 +86,19 @@ struct Args {
 
 	#[arg(long, default_value_t = OptimizationLevel(interpretor_core::OptimizationLevel::Default))]
 	opt: OptimizationLevel,
+
+	#[arg(long, default_value_t = Output::Text)]
+	output: Output,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[derive(serde::Serialize)]
+struct ParserError {
+	line: usize,
+	column: usize,
+	message: String,
+}
+
+fn main() -> ExitCode {
 	let args = Args::parse();
 	if (args.object as u32 + args.executable as u32 + args.llvm_ir as u32) != 1 {
 		panic!("Need at least one of --object, --executable, or --llvm-ir.");
@@ -84,18 +108,42 @@ fn main() -> Result<(), Box<dyn Error>> {
 	let mut code = String::new();
 	program_file.read_to_string(&mut code).unwrap();
 
-	let context = interpretor_core::Context::create();
-	let compiler = interpretor_core::Compiler::compile(&context, &code, &args.source_path).unwrap();
+	let result = (|| {
+		let context = interpretor_core::Context::create();
+		let compiler = interpretor_core::Compiler::compile(&context, &code, &args.source_path)?;
 
-	if args.object {
-		compiler.write_object(args.destination_path, args.opt.into()).unwrap();
-	} else if args.executable {
-		compiler.write_executable(args.destination_path, args.opt.into()).unwrap();
-	} else if args.llvm_ir {
-		compiler.write_llvm_ir(args.destination_path).unwrap();
+		if args.object {
+			compiler.write_object(args.destination_path, args.opt.into())?;
+		} else if args.executable {
+			compiler.write_executable(args.destination_path, args.opt.into())?;
+		} else if args.llvm_ir {
+			compiler.write_llvm_ir(args.destination_path)?;
+		} else {
+			unreachable!()
+		}
+		Ok(())
+	})();
+
+	if let Err(interpretor_core::CompilerError::ParserError(parser_error)) = result {
+		let parser_error = ParserError {
+			line: parser_error.0,
+			column: parser_error.1,
+			message: parser_error.make_string(),
+		};
+		match args.output {
+			Output::Text => {
+				eprintln!("{}", parser_error.message);
+			}
+			Output::Json => {
+				let serialized = serde_json::to_string(&parser_error).unwrap();
+				eprintln!("{}", serialized);
+			}
+		}
+		
+		return ExitCode::FAILURE;
 	} else {
-		unreachable!()
+		result.unwrap();
 	}
 
-	Ok(())
+	ExitCode::SUCCESS
 }

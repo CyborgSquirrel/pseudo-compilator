@@ -75,15 +75,15 @@ impl parse::ParsingError {
 					format!("în această poziție ar fi trebuit să apară un caracter."),
 				ExpectedEnd =>
 					format!("până aici ar fi trebuit să se termine linia de cod."),
-				ExpectedLvalue =>
-					format!("aici ar fi trebuit să apară o variabilă."),
+				ExpectedIdent =>
+					format!("aici ar fi trebuit să apară un nume de variabilă."),
 				ExpectedScrieParam =>
 					format!("aici ar fi trebuit să apară o expresie, un caracter ('.'), sau un șir de caractere (\"...\")."),
 				ExpectedFloatRvalue =>
 					format!("aici ar fi trebuit să apară o expresie."),
 				ExpectedBoolRvalue =>
 					format!("aici ar fi trebuit să apară o condiție."),
-				ExpectedNonrecursiveInstruction =>
+				ExpectedBlocklessInstruction =>
 					format!("aici ar fi trebuit să apară o atribuire, interschimbare, sau o instrucțiune de tip scrie sau citește."),
 
 				ExpectedSomethingElse(expecting) => {
@@ -96,11 +96,11 @@ impl parse::ParsingError {
 					format!("paranteza stângă nu are paranteză dreaptă corespunzătoare."),
 				UnclosedRParen =>
 					format!("paranteza dreaptă nu are paranteză stângă corespunzătoare."),
-				InvalidLvalueName(name) =>
+				InvalidIdent(name) =>
 					format!("nume de variabilă nevalid „{}”.", name),
 				InvalidFloatLiteral => format!("număr nevalid."),
 
-				InvalidLvalueNameOrKeyword(value) =>
+				InvalidWord(value) =>
 					format!("nume de variabilă sau cuvânt cheie nevalid „{}”.", value),
 				
 				InvalidFloatUnopOperands(op) =>

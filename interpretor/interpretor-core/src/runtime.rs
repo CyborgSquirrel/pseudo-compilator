@@ -19,7 +19,8 @@ fn float_evaluate<'a>(
 ) -> RuntimeResult<f32> {
 	match rvalue {
 		FloatRvalue::Literal(x) => Ok(*x),
-		FloatRvalue::Lvalue(x) => variables.get(x.0).cloned(),
+		// FloatRvalue::Lvalue(x) => variables.get(x.0).cloned(),
+		FloatRvalue::Lvalue(x) => todo!(),
 		FloatRvalue::Unop(op, x) => {
 			let x = float_evaluate(variables, x)?;
 			Ok(op.evaluate(x))
@@ -29,6 +30,7 @@ fn float_evaluate<'a>(
 			let y = float_evaluate(variables, y)?;
 			Ok(op.evaluate(x, y))
 		}
+		_ => todo!(),
 	}
 }
 
@@ -120,13 +122,15 @@ impl<'a, 'b> Runner<'a, 'b> {
 				let instruction = last.peek().unwrap();
 				match &instruction.inner {
 					Instructiune::Atribuire(lvalue, rvalue) => {
-						variables.assign(lvalue.0, float_evaluate(variables, rvalue)?);
+						todo!();
+						// variables.assign(lvalue.0, float_evaluate(variables, rvalue)?);
 						last.next();
 						self.instructions_executed += 1;
 						Ok(RuntimeState::Running)
 					}
 					Instructiune::Interschimbare(lt_lvalue, rt_lvalue) => {
-						variables.swap(lt_lvalue.0, rt_lvalue.0)?;
+						todo!();
+						// variables.swap(lt_lvalue.0, rt_lvalue.0)?;
 						last.next();
 						self.instructions_executed += 1;
 						Ok(RuntimeState::Running)

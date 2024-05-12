@@ -6,12 +6,18 @@ init_depth_var!();
 use crate::ast::{
 	Instructiune,
 	ScrieParam,
-	Lvalue, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop, Node, Location, InstructiuneNode};
+	Ident, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop, Node, Location, InstructiuneNode, FloatRvalue, AtribuireRvalue, ListRvalue, Lvalue};
 use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug)]
-pub enum GraphemeKind { Reserved, Ignored, Separator, Other }
+pub enum GraphemeKind {
+	Reserved,
+	Ignored,
+	Separator,
+	Other,
+}
+
 pub fn get_grapheme_kind(grapheme: &str) -> GraphemeKind {
 	match grapheme {
 		"+"|"-"|"*"|"/"|"%"|
@@ -28,6 +34,28 @@ pub fn get_grapheme_kind(grapheme: &str) -> GraphemeKind {
 }
 
 #[derive(Debug)]
+pub enum Word {
+	Daca,
+	Cat,
+	Pentru,
+	Scrie,
+	Citeste,
+}
+
+impl Word {
+	fn from_name(name: &str) -> Option<Self> {
+		Some(match name {
+			"daca"|"dacă" => Word::Daca,
+			"cat"|"cât" => Word::Cat,
+			"pentru" => Word::Pentru,
+			"scrie" => Word::Scrie,
+			"citeste"|"citește" => Word::Citeste,
+			_ => return None,
+		})
+	}
+}
+
+#[derive(Debug)]
 pub enum Arrow {
 	Left,
 	LeftRight,
@@ -39,20 +67,20 @@ pub enum LineParsingErrorKind {
 	ExpectedStrOptionalDiacritics(&'static str),
 	ExpectedAnyGrapheme,
 	ExpectedEnd,
-	ExpectedLvalue,
+	ExpectedIdent,
 	ExpectedScrieParam,
 	ExpectedFloatRvalue,
 	ExpectedBoolRvalue,
-	ExpectedNonrecursiveInstruction,
+	ExpectedBlocklessInstruction,
 	
 	ExpectedSomethingElse(expression::ExpectingFlags),
 	MismatchedParens,
 	UnclosedLParen,
 	UnclosedRParen,
-	InvalidLvalueName(String),
+	InvalidIdent(String),
 	InvalidFloatLiteral,
 
-	InvalidLvalueNameOrKeyword(String),
+	InvalidWord(String),
 	
 	InvalidFloatUnopOperands(FloatUnop),
 	InvalidFloatBinopOperands(FloatBinop),
@@ -190,20 +218,31 @@ impl<'a> LineCursor<'a> {
 			self.grapheme += 1;
 			self.index += one.len();
 			Some((self, one))
-		} else { None }
+		} else {
+			None
+		}
 	}
 
-	fn parse_lvalue(self) -> LineParsingIntermediateResult<'a, Lvalue<'a>> {
-		let (new_self, name) = self.read_lvalue_or_keyword()?;
-		if !name.is_empty() {
-			Ok((new_self, Lvalue(name)))
-		} else { Err(self.make_error(LineParsingErrorKind::ExpectedLvalue)) }
+	fn parse_ident(self) -> LineParsingIntermediateResult<'a, Ident<'a>> {
+		Ok({
+			let new_self = self;
+			let (new_self, (name, word)) = new_self.parse_word()?;
+			if word.is_some() {
+				return Err(new_self.make_error(LineParsingErrorKind::InvalidIdent(String::from(name))))
+			}
+			if name.is_empty() {
+				return Err(new_self.make_error(LineParsingErrorKind::ExpectedIdent))
+			}
+			(new_self, Ident(name))
+		})
 	}
 
 	fn expect_end(self) -> LineParsingResult<()> {
 		if self.code.len() == self.index {
 			Ok(())
-		} else { Err(self.make_error(LineParsingErrorKind::ExpectedEnd)) }
+		} else {
+			Err(self.make_error(LineParsingErrorKind::ExpectedEnd))
+		}
 	}
 
 	fn parse_second_step_citeste(mut self, old_self: Self) -> LineParsingIntermediateResult<'a, InstructiuneNode<'a>> {
@@ -211,7 +250,7 @@ impl<'a> LineCursor<'a> {
 		let mut done = false;
 		while !done {
 			self = self.skip_spaces();
-			let (new_self, lvalue) = self.parse_lvalue()?;
+			let (new_self, lvalue) = self.parse_ident()?;
 			self = new_self;
 			lvalues.push(lvalue);
 			self = self.skip_spaces();
@@ -231,7 +270,9 @@ impl<'a> LineCursor<'a> {
 			self.index += grapheme.len();
 			self.grapheme += 1;
 			Ok((self, grapheme))
-		} else { Err(self.make_error(LineParsingErrorKind::ExpectedAnyGrapheme)) }
+		} else {
+			Err(self.make_error(LineParsingErrorKind::ExpectedAnyGrapheme))
+		}
 	}
 
 	fn parse_scrie_param(self) -> LineParsingIntermediateResult<'a, ScrieParam<'a>> {
@@ -247,7 +288,8 @@ impl<'a> LineCursor<'a> {
 				Ok((new_self, ScrieParam::StringLiteral(string)))
 			}
 			_ => {
-				let (new_self, rvalue) = self.parse_float_rvalue()?;
+				let (new_self, rvalue) = self.parse_rvalue()?;
+				let rvalue = rvalue.into_float().unwrap(); // TODO: type check
 				Ok((new_self, ScrieParam::Rvalue(rvalue)))
 			}
 		}
@@ -278,23 +320,67 @@ impl<'a> LineCursor<'a> {
 		}
 	}
 	
-	fn parse_second_step_lvalue(self, old_self: Self, lvalue: Lvalue<'a>) -> LineParsingIntermediateResult<'a, InstructiuneNode<'a>> {
-		let new_self = self;
-		let (new_self, arrow) = new_self.skip_spaces().parse_arrow()?;
-		match arrow {
-			Arrow::Left => {
-				let (new_self, rvalue) = new_self.skip_spaces().parse_float_rvalue()?;
-				Ok((new_self, old_self.make_node(Instructiune::Atribuire(lvalue, rvalue))))
+	// #[trace]
+	fn parse_assignment_list_element(self) -> LineParsingIntermediateResult<'a, Option<FloatRvalue<'a>>> {
+		Ok({
+			let new_self = self;
+			let new_self = new_self.skip_spaces();
+			
+			if new_self.expect_str(";").is_ok() || new_self.expect_end().is_ok() {
+				(self, None)
+			} else {
+				let (new_self, rvalue) = new_self.parse_float_rvalue()?;
+				(new_self, Some(rvalue))
 			}
-			Arrow::LeftRight => {
-				let (new_self, other_lvalue) = new_self.skip_spaces().parse_lvalue()?;
-				Ok((new_self, old_self.make_node(Instructiune::Interschimbare(lvalue, other_lvalue))))
+		})
+	}
+
+	// #[trace]
+	fn parse_assignment(self, old_self: Self, lvalue: Lvalue<'a>) -> LineParsingIntermediateResult<'a, InstructiuneNode<'a>> {
+		Ok({
+			let new_self = self;
+			let (new_self, rvalue) = new_self.skip_spaces().parse_rvalue()?;
+			if let Ok((mut new_self, _)) = new_self.skip_spaces().expect_str(",") {
+				let mut list = Vec::new();
+				list.push(rvalue.into_float().unwrap()); // TODO: Type check
+
+				loop {
+					let result = new_self.parse_assignment_list_element()?;
+					new_self = result.0;
+					if let Some(rvalue) = result.1 {
+						list.push(rvalue);
+						let result = new_self.skip_spaces().expect_str(",");
+						if let Ok(result) = result {
+							new_self = result.0;
+						} else {
+							break;
+						}
+					} else {
+						break;
+					}
+				}
+
+				let rvalue = ListRvalue::Literal(list);
+
+				(new_self, old_self.make_node(Instructiune::Atribuire(lvalue, AtribuireRvalue::List(rvalue))))
+			} else {
+				let instruction = match rvalue {
+					expression::Operand::Ident(value) => {
+						Instructiune::Atribuire(lvalue, AtribuireRvalue::Unknown(value))
+					}
+					expression::Operand::FloatRvalue(value) => {
+						Instructiune::Atribuire(lvalue, AtribuireRvalue::Float(value))
+					}
+					_ => unimplemented!() // TODO: type error
+				};
+				
+				(new_self, old_self.make_node(instruction))
 			}
-		}
+		})
 	}
 	
 	fn parse_second_step_pentru(self, old_self: Self) -> LineParsingResult<InstructiuneNode<'a>> {
-		let (new_self, lvalue) = self.skip_spaces().parse_lvalue()?;
+		let (new_self, lvalue) = self.skip_spaces().parse_ident()?;
 		let (new_self, _) = new_self.skip_spaces().expect_str("<-")?;
 		let (new_self, start) = new_self.skip_spaces().parse_float_rvalue()?;
 		
@@ -303,7 +389,9 @@ impl<'a> LineCursor<'a> {
 		
 		let (new_self, increment) = if let Ok((new_self, _)) = new_self.skip_spaces().expect_str(",") {
 			new_self.parse_float_rvalue().map(|(new_self, increment)| (new_self, Some(increment)))?
-		} else { (new_self, None) };
+		} else {
+			(new_self, None)
+		};
 		
 		let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("execută")?;
 		new_self.skip_spaces().expect_end()?;
@@ -311,12 +399,16 @@ impl<'a> LineCursor<'a> {
 		Ok(old_self.make_node(Instructiune::PentruExecuta(lvalue, start, end, increment, Vec::new())))
 	}
 
-	fn check_invalid_assignment(self, name: &'a str) -> LineParsingResult<()> {
-		let new_self = self;
-		if let Ok((new_self, _arrow)) = new_self.skip_spaces().parse_arrow() {
-			return Err(new_self.make_error(LineParsingErrorKind::InvalidLvalueName(String::from(name))));
-		}
-		Ok(())
+	/// Checks if the rest of the statement looks like an assignment (or a swap),
+	/// and throws an error if that's the case.
+	fn check_invalid_ident(self, name: &'a str) -> LineParsingResult<()> {
+		Ok({
+			let new_self = self;
+			if let Ok((new_self, _arrow)) = new_self.skip_spaces().parse_arrow() {
+				return Err(new_self.make_error(LineParsingErrorKind::InvalidIdent(String::from(name))));
+			}
+			()
+		})
 	}
 	
 	fn parse_second_step_daca(self, old_self: Self) -> LineParsingResult<InstructiuneNode<'a>> {
@@ -359,69 +451,99 @@ impl<'a> LineCursor<'a> {
 		Ok(())
 	}
 	
-	fn parse_blockless_instructions(mut self, mut old_self: Self, mut name: &'a str) -> LineParsingResult<Vec<InstructiuneNode<'a>>> {
+	fn parse_blockless_instructions(
+		mut self, mut old_self: Self,
+		mut name: &'a str, mut word: Option<Word>,
+	) -> LineParsingResult<Vec<InstructiuneNode<'a>>> {
 		let mut instructions = Vec::new();
 		loop {
-			let (new_self, instruction) = match name {
-				"daca"|"dacă"|"cat"|"cât"|"pentru" => {
-					self.check_invalid_assignment(name)?;
-					Err(self.make_error(LineParsingErrorKind::ExpectedNonrecursiveInstruction))
+			let (new_self, instruction) = match word {
+				Some(Word::Scrie) => {
+					self.check_invalid_ident(name)?;
+					self.parse_second_step_scrie(old_self)?
 				}
-				"scrie" =>
-					self.parse_second_step_scrie(old_self),
-				"citeste"|"citește" =>
-					self.parse_second_step_citeste(old_self),
-				x =>
-					self.parse_second_step_lvalue(old_self, Lvalue(x)),
-			}?;
+				Some(Word::Citeste) => {
+					self.check_invalid_ident(name)?;
+					self.parse_second_step_citeste(old_self)?
+				}
+				Some(_) => {
+					self.check_invalid_ident(name)?;
+					return Err(self.make_error(LineParsingErrorKind::ExpectedBlocklessInstruction));
+				}
+				None => {
+					old_self.parse_starting_lvalue()?
+				}
+			};
 			instructions.push(instruction);
 
 			self = new_self.skip_spaces();
-			if let Ok((new_self, _)) = self.expect_str(";") {
-				self = new_self.skip_spaces();
-				old_self = self;
-				let (new_self, new_name) = self.read_lvalue_or_keyword()?;
-				self = new_self;
-				name = new_name;
-			} else {
+			let Ok((new_self, _)) = self.expect_str(";") else {
 				break;
-			}
+			};
+			self = new_self.skip_spaces();
+			old_self = self;
+
+			(self, (name, word)) = self.parse_word()?;
 		}
 		self.skip_spaces().expect_end()?;
 		Ok(instructions)
 	}
 
-	fn read_lvalue_or_keyword(self) -> LineParsingResult<(Self, &'a str)> {
-		let (new_self, value) = self.read_while(|x| matches!(get_grapheme_kind(x), GraphemeKind::Other));
-		match value.graphemes(true).nth(0).unwrap() {
-			"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => {
-				return Err(self.make_error(LineParsingErrorKind::InvalidLvalueNameOrKeyword(String::from(value))));
+	fn parse_starting_lvalue(self) -> LineParsingIntermediateResult<'a, InstructiuneNode<'a>> {
+		Ok({
+			let old_self = self;
+			let new_self = self;
+			let (new_self, lvalue) = new_self.parse_lvalue()?;
+			
+			let (new_self, arrow) = new_self.skip_spaces().parse_arrow()?;
+			match arrow {
+				Arrow::Left => {
+					new_self.parse_assignment(old_self, lvalue)?
+				}
+				Arrow::LeftRight => {
+					let (new_self, other_lvalue) = new_self.skip_spaces().parse_lvalue()?;
+					(new_self, old_self.make_node(Instructiune::Interschimbare(lvalue, other_lvalue)))
+				}
 			}
-			_ => { }
-		}
-		Ok((new_self, value))
+		})
 	}
-	
+
+	fn parse_word(self) -> LineParsingIntermediateResult<'a, (&'a str, Option<Word>)> {
+		Ok({
+			let new_self = self;
+			let (new_self, name) = new_self.read_while(|x| matches!(get_grapheme_kind(x), GraphemeKind::Other));
+			match name.graphemes(true).nth(0).unwrap() {
+				"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => {
+					return Err(self.make_error(LineParsingErrorKind::InvalidWord(String::from(name))));
+				}
+				_ => (),
+			}
+
+			let word = Word::from_name(name);
+			(new_self, (name, word))
+		})
+	}
+
 	fn parse(self) -> LineParsingResult<Vec<InstructiuneNode<'a>>> {
 		let old_self = self;
 
 		let new_self = self;
-		let (new_self, name) = new_self.read_lvalue_or_keyword()?;
-		match name {
-			"daca"|"dacă" => {
-				new_self.check_invalid_assignment(name)?;
+		let (new_self, (name, word)) = new_self.parse_word()?;
+		match word {
+			Some(Word::Daca) => {
+				new_self.check_invalid_ident(name)?;
 				Ok(vec![new_self.parse_second_step_daca(old_self)?])
 			}
-			"cat"|"cât" => {
-				new_self.check_invalid_assignment(name)?;
+			Some(Word::Cat) => {
+				new_self.check_invalid_ident(name)?;
 				Ok(vec![new_self.parse_second_step_cat_timp(old_self)?])
 			}
-			"pentru" => {
-				new_self.check_invalid_assignment(name)?;
+			Some(Word::Pentru) => {
+				new_self.check_invalid_ident(name)?;
 				Ok(vec![new_self.parse_second_step_pentru(old_self)?])
 			}
 			_ =>
-				new_self.parse_blockless_instructions(old_self, name),
+				new_self.parse_blockless_instructions(old_self, name, word),
 		}
 	}
 }
@@ -693,7 +815,7 @@ mod tests {
 		ParsingError(
 			1, 17,
 			LineParsingError(
-				ExpectedNonrecursiveInstruction)),
+				ExpectedBlocklessInstruction)),
 		r#"
 			daca +(1=2 sau 3<5 si 4=4) atunci
 				scrie "ok"
@@ -815,7 +937,7 @@ mod tests {
 		recursive_instruction_after_nonrecursive_instruction,
 		ParsingError(
 			1, 17,
-			LineParsingError(ExpectedNonrecursiveInstruction)),
+			LineParsingError(ExpectedBlocklessInstruction)),
 		r#"
 			scrie 12+3 ; daca a=12 atunci
 		"#
@@ -825,7 +947,7 @@ mod tests {
 		invalid_assignment_daca,
 		ParsingError(
 			1, 7,
-			LineParsingError(InvalidLvalueName(String::from("daca")))),
+			LineParsingError(InvalidIdent(String::from("daca")))),
 		r#"
 			daca <- 42
 		"#
@@ -835,7 +957,7 @@ mod tests {
 		invalid_assignment_pentru,
 		ParsingError(
 			1, 9,
-			LineParsingError(InvalidLvalueName(String::from("pentru")))),
+			LineParsingError(InvalidIdent(String::from("pentru")))),
 		r#"
 			pentru <- 42
 		"#
@@ -845,7 +967,7 @@ mod tests {
 		invalid_assignment_cat,
 		ParsingError(
 			1, 6,
-			LineParsingError(InvalidLvalueName(String::from("cat")))),
+			LineParsingError(InvalidIdent(String::from("cat")))),
 		r#"
 			cat <- 42
 		"#
@@ -855,7 +977,7 @@ mod tests {
 		invalid_assignment_daca_second,
 		ParsingError(
 			1, 16,
-			LineParsingError(InvalidLvalueName(String::from("daca")))),
+			LineParsingError(InvalidIdent(String::from("daca")))),
 		r#"
 			x <- 41; daca <- 42
 		"#

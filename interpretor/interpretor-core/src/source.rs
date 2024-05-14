@@ -43,7 +43,7 @@ impl Offset {
   	}
   	
   	self.graphemes += 1;
-  	self.bytes += 1;
+  	self.bytes += grapheme.len() as u32;
   }
 
   pub fn add_string(&mut self, string: &str) {

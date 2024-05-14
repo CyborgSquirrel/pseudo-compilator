@@ -9,15 +9,6 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::{ValueTypeFlags, expression::{self, convert_node, Operand}, Arrow, ValueType, Word, get_grapheme_kind, GraphemeKind, ParserError, ParserErrorKind};
 
-// #[derive(Debug, PartialEq, Eq)]
-// pub enum LineParsingErrorKind {
-// }
-
-// #[derive(Debug)]
-// pub struct LineParsingError(pub usize, pub LineParsingErrorKind);
-// pub type LineParsingIntermediateResult<'a, T> = Result<(LineCursor<'a>, T), LineParsingError>;
-// pub type LineParsingResult<T> = Result<T, LineParsingError>;
-
 pub type ParserIntermediateResult<'src, T> = Result<(LineCursor<'src>, T), ParserError>;
 pub type ParserResult<T> = Result<T, ParserError>;
 
@@ -48,44 +39,49 @@ impl<'src> LineCursor<'src> {
 		&self.code[self.offset.bytes() as usize..self.offset.bytes() as usize+until]
 	}
 
-	fn advance_by(&mut self, amount: usize) {
-		self.offset.add_string(self.code_until(amount));
-	}
-
 	fn expect_str(mut self, expected: &'static str) -> ParserIntermediateResult<'src, ()> {
-		if self.code().starts_with(expected) {
-			self.advance_by(expected.len());
-			Ok((self, ()))
-		} else {
-			Err(self.offset.make_err(ParserErrorKind::ExpectedStr(expected)))
-		}
+		Ok({
+			let offset = self.offset;
+			for (grapheme, expected_grapheme) in izip!(
+				self.code().graphemes(true),
+				expected.graphemes(true),
+			) {
+				if grapheme != expected_grapheme {
+					return Err(offset.make_err(ParserErrorKind::ExpectedStr(expected)))
+				}
+				self.offset.add_grapheme(grapheme);
+			}
+			(self, ())
+		})
 	}
 
 	pub fn expect_str_optional_diacritics(mut self, expected: &'static str) -> ParserIntermediateResult<'src, ()> {
-		let mut graphemes = self.code().graphemes(true);
-		let mut expected_graphemes = expected.graphemes(true);
-		for (grapheme, expected_grapheme) in izip!(&mut graphemes, &mut expected_graphemes) {
-			self.offset.add_grapheme(grapheme);
-			let matches = match (grapheme, expected_grapheme) {
-				("a", "ă")|("A", "Ă")|
-				("a", "â")|("A", "Â")|
-				("i", "î")|("I", "Î")|
-				("s", "ș")|("S", "Ș")|
-				("t", "ț")|("T", "Ț")
-					=> true,
-				_
-					=> grapheme == expected_grapheme,
-			};
-			if !matches {
-				return Err(self.offset.make_err(ParserErrorKind::ExpectedStrOptionalDiacritics(expected)))
+		Ok({
+			let offset = self.offset;
+			for (grapheme, expected_grapheme) in izip!(
+				self.code().graphemes(true),
+				expected.graphemes(true),
+			) {
+				let matches = match (grapheme, expected_grapheme) {
+					("a", "ă")|("A", "Ă")|
+					("a", "â")|("A", "Â")|
+					("i", "î")|("I", "Î")|
+					("s", "ș")|("S", "Ș")|
+					("t", "ț")|("T", "Ț")
+						=> true,
+					_
+						=> grapheme == expected_grapheme,
+				};
+
+				if !matches {
+					return Err(offset.make_err(ParserErrorKind::ExpectedStrOptionalDiacritics(expected)))
+				}
+
+				self.offset.add_grapheme(grapheme);
 			}
-		}
-		
-		if expected_graphemes.next().is_some() {
-			return Err(self.offset.make_err(ParserErrorKind::ExpectedStrOptionalDiacritics(expected)))
-		}
-		
-		Ok((self, ()))
+
+			(self, ())
+		})
 	}
 
 	pub fn skip_spaces(mut self) -> Self {
@@ -324,12 +320,15 @@ impl<'src> LineCursor<'src> {
 	}
 	
 	fn parse_second_step_cat_timp(self, old_self: Self) -> ParserResult<InstructiuneNode<'src>> {
-		let (new_self, _) = self.expect_str_optional_diacritics(" timp ")?;
-		let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
-		let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("execută")?;
-		new_self.skip_spaces().expect_end()?;
-		
-		Ok(old_self.make_node(Instructiune::CatTimpExecuta(rvalue, Vec::new())))
+		Ok({
+			let new_self = self;
+			let (new_self, _) = new_self.expect_str(" timp")?;
+			let (new_self, _) = new_self.expect_str(" ")?;
+			let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
+			let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("execută")?;
+			new_self.skip_spaces().expect_end()?;
+			old_self.make_node(Instructiune::CatTimpExecuta(rvalue, Vec::new()))
+		})
 	}
 	
 	pub fn parse_pana_cand(self, instructions: Vec<InstructiuneNode<'src>>) -> ParserResult<InstructiuneNode<'src>> {
@@ -399,11 +398,11 @@ impl<'src> LineCursor<'src> {
 					self.check_invalid_ident(name)?;
 					self.parse_second_step_sterge(old_self)?
 				}
-				Some(_) => {
+				Some(word) if !word.can_be_ident() => {
 					self.check_invalid_ident(name)?;
 					return Err(self.offset.make_err(ParserErrorKind::ExpectedBlocklessInstruction));
 				}
-				None => {
+				_ => {
 					old_self.parse_starting_lvalue()?
 				}
 			};
@@ -458,25 +457,30 @@ impl<'src> LineCursor<'src> {
 	}
 
 	pub fn parse(self) -> ParserResult<Vec<InstructiuneNode<'src>>> {
-		let old_self = self;
+		Ok({
+			let old_self = self;
 
-		let new_self = self;
-		let (new_self, (name, word)) = new_self.parse_word()?;
-		match word {
-			Some(Word::Daca) => {
-				new_self.check_invalid_ident(name)?;
-				Ok(vec![new_self.parse_second_step_daca(old_self)?])
+			let new_self = self;
+			let (new_self, (value, word)) = new_self.parse_word()?;
+			match word {
+				Some(Word::Daca) => {
+					new_self.check_invalid_ident(value)?;
+					vec![new_self.parse_second_step_daca(old_self)?]
+				}
+				Some(Word::Cat) => {
+					if let Ok((_new_self, _arrow)) = new_self.skip_spaces().parse_arrow() {
+						new_self.parse_blockless_instructions(old_self, value, word)?
+					} else {
+						vec![new_self.parse_second_step_cat_timp(old_self)?]
+					}
+				}
+				Some(Word::Pentru) => {
+					new_self.check_invalid_ident(value)?;
+					vec![new_self.parse_second_step_pentru(old_self)?]
+				}
+				_ =>
+					new_self.parse_blockless_instructions(old_self, value, word)?,
 			}
-			Some(Word::Cat) => {
-				new_self.check_invalid_ident(name)?;
-				Ok(vec![new_self.parse_second_step_cat_timp(old_self)?])
-			}
-			Some(Word::Pentru) => {
-				new_self.check_invalid_ident(name)?;
-				Ok(vec![new_self.parse_second_step_pentru(old_self)?])
-			}
-			_ =>
-				new_self.parse_blockless_instructions(old_self, name, word),
-		}
+		})
 	}
 }

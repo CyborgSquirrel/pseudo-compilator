@@ -85,7 +85,12 @@ impl std::cmp::Ord for Offset {
 
 /// Pair of (start_offset, end_offset), delimiting a stretch of source code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span(pub Offset, pub Offset);
+pub struct Span(
+	/// Start offset.
+	pub Offset,
+	/// End offset.
+	pub Offset,
+);
 
 impl Span {
 	pub fn node<T>(&self, inner: T) -> Node<T> {
@@ -101,7 +106,11 @@ impl Span {
 }
 
 #[derive(Debug)]
-pub struct Node<T>(pub Span, pub T);
+pub struct Node<T>(
+	pub Span,
+	/// Inner value.
+	pub T,
+);
 
 impl<T> Node<T> {
 	pub fn new(

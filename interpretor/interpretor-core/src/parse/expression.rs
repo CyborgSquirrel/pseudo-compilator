@@ -380,10 +380,10 @@ impl<'src> Parser<'src> {
 			}
 			_ => {
 				let word = Word::from_name(name);
-				if word.is_some() {
-					return Err(self.cursor.offset.make_err(ParserErrorKind::InvalidIdent(String::from(name))));
-				} else {
+				if word.as_ref().map(Word::can_be_ident).unwrap_or(true) {
 					Operand::Ident(Ident(name))
+				} else {
+					return Err(self.cursor.offset.make_err(ParserErrorKind::InvalidIdent(String::from(name))));
 				}
 			}
 		};

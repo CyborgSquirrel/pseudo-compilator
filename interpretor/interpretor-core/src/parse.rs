@@ -53,6 +53,13 @@ impl Word {
 			_ => return None,
 		})
 	}
+
+	fn can_be_ident(&self) -> bool {
+		match self {
+			Word::Cat => true,
+			_ => false,
+		}
+	}
 }
 
 #[derive(Debug)]
@@ -548,17 +555,6 @@ use super::{
 	}
 
 	test_parser_err! {
-		invalid_assignment_cat,
-		(
-			1, 6,
-			InvalidIdent(String::from("cat")),
-		),
-		r#"
-			cat <- 42
-		"#
-	}
-
-	test_parser_err! {
 		invalid_assignment_daca_second,
 		(
 			1, 16,
@@ -609,6 +605,19 @@ use super::{
 			a <- 1,2,3
 			b <- 41; c <- 42
 			citeste a[0], b, c, a[1]
+		"#
+	}
+
+	test_parser_ok! {
+		parse_cat_ident,
+		r#"
+			cat <- 42
+			a <- 41
+			cat <-> a
+
+			x <- (1+2+cat) * cat
+
+			cât <- cat
 		"#
 	}
 }

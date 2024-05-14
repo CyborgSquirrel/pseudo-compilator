@@ -130,12 +130,145 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			let fail_type_error_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: valoarea are tipul „%s”, însă ar fi trebuit să fi avut tipul „%s”.\n", "format")?.as_pointer_value();
 			let fail_range_error_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: indicele %lf iese din intervalul [%lf; %lf).\n", "format")?.as_pointer_value();
 
-			let debug_type = debug_info_builder.create_basic_type(
-				"f64",
-				64,
-				0x04, // float type, source: https://dwarfstd.org/doc/DWARF5.pdf#section.7.8
-				0,
-			).unwrap().as_type();
+			let debug_type = {
+				// Source for LLVMDWARFTypeEncoding values:
+				// https://dwarfstd.org/doc/DWARF5.pdf#section.7.8
+
+				let int_type = debug_info_builder.create_basic_type(
+					"int",
+					64,
+					0x07, // unsigned int
+					0,
+				).unwrap().as_type();
+
+				let float_type = debug_info_builder.create_basic_type(
+					"float",
+					64,
+					0x04, // float
+					0,
+				).unwrap().as_type();
+
+				let ptr_type = debug_info_builder.create_basic_type(
+					"ptr",
+					64,
+					0x01, // address
+					0,
+				).unwrap().as_type();
+
+				let discriminant_type = debug_info_builder.create_member_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"discriminant",
+					debug_compile_unit.get_file(),
+					0,
+					64,
+					0,
+					0,
+					0,
+					int_type,
+				).as_type();
+
+				let float_inner_type = debug_info_builder.create_member_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"float_inner",
+					debug_compile_unit.get_file(),
+					0,
+					64,
+					0,
+					64,
+					0,
+					float_type,
+				).as_type();
+
+				let float_variant_type = debug_info_builder.create_struct_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"float_variant",
+					debug_compile_unit.get_file(),
+					0,
+					128,
+					0,
+					0,
+					None,
+					&[
+						discriminant_type,
+						float_inner_type,
+					],
+					0,
+					None,
+					"float_variant",
+				).as_type();
+
+				let float_variant_member_type = debug_info_builder.create_member_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"float_variant_member",
+					debug_compile_unit.get_file(),
+					0,
+					128,
+					0,
+					0,
+					0,
+					float_variant_type,
+				).as_type();
+
+				let list_inner_type = debug_info_builder.create_member_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"list_inner",
+					debug_compile_unit.get_file(),
+					0,
+					64,
+					0,
+					64,
+					0,
+					ptr_type,
+				).as_type();
+
+				let list_variant_type = debug_info_builder.create_struct_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"list_variant",
+					debug_compile_unit.get_file(),
+					0,
+					128,
+					0,
+					0,
+					None,
+					&[
+						discriminant_type,
+						list_inner_type,
+					],
+					0,
+					None,
+					"list_variant",
+				).as_type();
+
+				let list_variant_member_type = debug_info_builder.create_member_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"list_variant_member",
+					debug_compile_unit.get_file(),
+					0,
+					128,
+					0,
+					0,
+					0,
+					list_variant_type,
+				).as_type();
+
+				let variable_type = debug_info_builder.create_union_type(
+					debug_compile_unit.as_debug_info_scope(),
+					"variable",
+					debug_compile_unit.get_file(),
+					0,
+					128,
+					0,
+					0,
+					&[
+						float_variant_member_type,
+						list_variant_member_type,
+					],
+					0,
+					"variable",
+				).as_type();
+
+				variable_type
+			};
 
 			let mut compiler = Self {
 				context,
@@ -229,7 +362,6 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 					name_ptr
 				};
 
-				// TODO: This is broken with new variables system.
 				let debug_variable = self.debug_info_builder.create_auto_variable(
 					self.debug_main_function.as_debug_info_scope(),
 					key,

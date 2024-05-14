@@ -32,11 +32,13 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 		Ok(())
 	}
 
-	pub fn write_executable<P: AsRef<Path>>(
+	pub fn write_executable<P1: AsRef<Path>, P2: AsRef<Path>>(
 		&self,
-		path: P,
+		lib_path: P1,
+		path: P2,
 		optimization_level: OptimizationLevel,
 	) -> Result<(), CompilerError> {
+		let lib_path = lib_path.as_ref();
 		let path = path.as_ref();
 
 		let object_path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
@@ -45,6 +47,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 		let output = Command::new("clang")
 			.arg("-lm")
+			.arg(lib_path)
 			.arg(object_path)
 			.arg("-o").arg(path)
 			.output().unwrap();

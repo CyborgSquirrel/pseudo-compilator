@@ -35,14 +35,10 @@ impl parse::ParserError {
 				format!("aici ar fi trebuit să apară un nume de variabilă."),
 			ExpectedScrieParam =>
 				format!("aici ar fi trebuit să apară o expresie, un caracter ('.'), sau un șir de caractere (\"...\")."),
-			ExpectedFloatRvalue =>
-				format!("aici ar fi trebuit să apară o expresie."),
 			ExpectedLvalue =>
-				todo!(),
-			ExpectedBoolRvalue =>
-				format!("aici ar fi trebuit să apară o condiție."),
+				format!("aici ar fi trebuit să apară un nume de variabilă, sau un element al unei liste."),
 			ExpectedBlocklessInstruction =>
-				format!("această instrucțiune nu poate fi folosită după un „;”"),
+				format!("această instrucțiune nu poate fi folosită după un „;”."),
 			ExpectedValueType(type_flags) => {
 				let expected_types = {
 					type_flags.iter().map(|flag| match flag {
@@ -51,7 +47,7 @@ impl parse::ParserError {
 						parse::ValueType::List => "o listă",
 					}).join(", ")
 				};
-				format!("tipul acestei valori ar fi trebuit să fie unul dintre următoarele: {}", expected_types)
+				format!("tipul acestei valori ar fi trebuit să fie unul dintre următoarele: {}.", expected_types)
 			}
 
 			ExpectedEnd =>

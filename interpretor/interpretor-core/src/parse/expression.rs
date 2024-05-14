@@ -3,11 +3,11 @@ use enumflags2::{bitflags, BitFlags, make_bitflags};
 trace::init_depth_var!();
 
 use unicode_segmentation::UnicodeSegmentation;
-use super::{get_grapheme_kind, GraphemeKind, ValueTypeFlags, ValueType, line::{LineCursor}, ParserErrorKind, ParserError};
+use super::{get_grapheme_kind, GraphemeKind, ValueTypeFlags, ValueType, line::LineCursor, ParserErrorKind, ParserError};
 use crate::{ast::{
 	Ident,
 	FloatUnop, FloatBinop, BoolBinop, FloatRvalue, BoolRvalue, BoolUnop, BoolBoolBinop, BoolFloatBinop, ListRvalue, FloatLvalue, ListLvalue, Lvalue
-}, parse::{Word}, source::{Node, Span}};
+}, parse::Word, source::Node};
 use super::line::ParserIntermediateResult;
 
 macro_rules! any {

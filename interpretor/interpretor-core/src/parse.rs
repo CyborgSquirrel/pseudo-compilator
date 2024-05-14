@@ -1,8 +1,6 @@
 use enumflags2::{bitflags, BitFlags};
 
-use crate::{ast::{
-	Instructiune,
-	InstructiuneNode, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop}, parse::line::LineCursor, source::{Offset, Node}};
+use crate::{ast::{Instructiune, InstructiuneNode}, parse::line::LineCursor, source::{Offset, Node}};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub mod expression;
@@ -91,8 +89,6 @@ pub enum ParserErrorKind {
 	ExpectedAnyGrapheme,
 	ExpectedIdent,
 	ExpectedScrieParam,
-	ExpectedFloatRvalue,
-	ExpectedBoolRvalue,
 	ExpectedLvalue,
 	ExpectedBlocklessInstruction,
 	ExpectedValueType(ValueTypeFlags),
@@ -388,10 +384,10 @@ use super::{
 	}
 	
 	test_parser_err! {
-		invalid_float_unop_operands_fixme,
+		invalid_float_unop_operands,
 		(
-			1, 17,
-			ExpectedBlocklessInstruction,
+			1, 6,
+			ExpectedValueType(make_bitflags!(ValueType::{Float})),
 		),
 		r#"
 			daca +(1=2 sau 3<5 si 4=4) atunci
@@ -400,9 +396,9 @@ use super::{
 	}
 	
 	test_parser_err! {
-		invalid_float_literal_fixme,
+		invalid_float_literal,
 		(
-			1, 4,
+			1, 3,
 			InvalidFloatLiteral,
 		),
 		r#"a<-41yeet41"#
@@ -596,10 +592,22 @@ use super::{
 		"#
 	}
 
+	test_parser_err! {
+		expected_lvalue,
+		(
+			1, 0,
+			ExpectedLvalue,
+		),
+		r#"
+			x+41 <- 42
+		"#
+	}
+
 	test_parser_ok! {
 		parse_citeste,
 		r#"
 			a <- 1,2,3
+			b <- 41; c <- 42
 			citeste a[0], b, c, a[1]
 		"#
 	}

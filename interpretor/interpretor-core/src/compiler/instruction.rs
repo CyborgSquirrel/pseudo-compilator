@@ -5,7 +5,7 @@ use itertools::{Itertools, izip};
 
 use inkwell::{values::{PointerValue, AnyValue}, FloatPredicate};
 
-use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue, Lvalue}, Compiler, EPSILON};
+use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue}, Compiler, EPSILON};
 
 use super::{Compile, lvalue::CompileLvalue};
 
@@ -123,7 +123,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 
 					// format string
 					{
-						let mut format = (
+						let mut format = {
 							params.iter()
 							.map(|param| match param {
 								ScrieParam::Rvalue(_) => "%f",
@@ -131,7 +131,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 								ScrieParam::StringLiteral(_) => "%s",
 							})
 							.join("")
-						);
+						};
 						format.push_str("\n");
 						
 						let format = compiler.builder.build_global_string_ptr(format.as_str(), "printf_format")?;
@@ -168,11 +168,11 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 
 					// format string
 					{
-						let format = (
+						let format = {
 							lvalues.iter()
 							.map(|_| "%lf")
 							.join(" ")
-						);
+						};
 
 						let format = compiler.builder.build_global_string_ptr(format.as_str(), "scanf_format")?;
 						let format = format.as_pointer_value();

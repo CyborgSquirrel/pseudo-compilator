@@ -124,7 +124,7 @@ impl<T> Node<T> {
 	}
 
 	pub fn span(&self) -> &Span {
-		&self.span()
+		&self.0
 	}
 
 	pub fn map<F, U>(self, f: F) -> Node<U>

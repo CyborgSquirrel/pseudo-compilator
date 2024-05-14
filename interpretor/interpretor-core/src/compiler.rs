@@ -5,9 +5,9 @@ use std::{collections::HashMap, path::Path};
 
 use interpretor_sys::VariableKind;
 
-use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, basic_block::BasicBlock, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}, FloatPredicate};
+use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}, FloatPredicate};
 
-use crate::{ast::{Ident, InstructiuneNode}, parse, source::Offset};
+use crate::{ast::{InstructiuneNode, IdentNode}, parse, source::{Offset, Node, Span}};
 
 use self::{other::External, error::{VerificationError, CompilerResult}, variable::Variable};
 
@@ -18,6 +18,7 @@ mod output;
 mod variable;
 mod lvalue;
 mod instruction;
+mod fail;
 
 trait Compile<'src, 'ctx> {
 	type Output;
@@ -38,9 +39,12 @@ pub struct Compiler<'src, 'ctx> {
 
 	external: External<'ctx>,
 
-	fail_variable_unset: BasicBlock<'ctx>,
-	fail_type_error: BasicBlock<'ctx>,
-	fail_range_error: BasicBlock<'ctx>,
+	float_type_name_ptr: PointerValue<'ctx>,
+	list_type_name_ptr: PointerValue<'ctx>,
+
+	fail_variable_unset_format_ptr: PointerValue<'ctx>,
+	fail_type_error_format_ptr: PointerValue<'ctx>,
+	fail_range_error_format_ptr: PointerValue<'ctx>,
 
 	debug_info_builder: DebugInfoBuilder<'ctx>,
 	debug_compile_unit: DICompileUnit<'ctx>,
@@ -119,62 +123,12 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 			let builder = context.create_builder();
 
-			let fail_variable_unset = {
-				let block = context.append_basic_block(main_fn, "fail_variable_unset");
-				builder.position_at_end(block);
-			
-				// TODO: Include name of variable, and line of code.
-				let args = [
-					builder.build_global_string_ptr("Variabila nu are nici o valoare!\n", "")?.as_pointer_value().into(),
-				];
-				builder.build_call(
-					external.printf,
-					args.as_slice(),
-					"error_printf"
-				)?;
+			let float_type_name_ptr = variables_builder.build_global_string_ptr("expresie", "float_type_name")?.as_pointer_value();
+			let list_type_name_ptr = variables_builder.build_global_string_ptr("listă", "list_type_name")?.as_pointer_value();
 
-				builder.build_call(external.exit, &[context.i64_type().const_int(1, false).into()], "")?;
-				builder.build_return(Some(&context.i64_type().const_int(1, false)))?;
-				block
-			};
-
-			let fail_type_error = {
-				let block = context.append_basic_block(main_fn, "fail_type_error");
-				builder.position_at_end(block);
-			
-				// TODO: Include name of variable, and line of code.
-				let args = [
-					builder.build_global_string_ptr("Variabila are tip greșit!\n", "")?.as_pointer_value().into(),
-				];
-				builder.build_call(
-					external.printf,
-					args.as_slice(),
-					"error_printf"
-				)?;
-
-				builder.build_call(external.exit, &[context.i64_type().const_int(1, false).into()], "")?;
-				builder.build_return(Some(&context.i64_type().const_int(1, false)))?;
-				block
-			};
-
-			let fail_range_error = {
-				let block = context.append_basic_block(main_fn, "fail_range_error");
-				builder.position_at_end(block);
-
-				// TODO: Include name of variable, and line of code.
-				let args = [
-					builder.build_global_string_ptr("Indicele iese din listă!\n", "")?.as_pointer_value().into(),
-				];
-				builder.build_call(
-					external.printf,
-					args.as_slice(),
-					"error_printf"
-				)?;
-
-				builder.build_call(external.exit, &[context.i64_type().const_int(1, false).into()], "")?;
-				builder.build_return(Some(&context.i64_type().const_int(1, false)))?;
-				block
-			};
+			let fail_variable_unset_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: variabila „%s” nu are nici o valoare.\n", "format")?.as_pointer_value();
+			let fail_type_error_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: valoarea are tipul „%s”, însă ar fi trebuit să fi avut tipul „%s”.\n", "format")?.as_pointer_value();
+			let fail_range_error_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: indicele %lf iese din intervalul [%lf; %lf).\n", "format")?.as_pointer_value();
 
 			let debug_type = debug_info_builder.create_basic_type(
 				"f64",
@@ -195,9 +149,12 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				main_fn,
 				external,
 
-				fail_variable_unset,
-				fail_type_error,
-				fail_range_error,
+				float_type_name_ptr,
+				list_type_name_ptr,
+
+				fail_variable_unset_format_ptr,
+				fail_type_error_format_ptr,
+				fail_range_error_format_ptr,
 
 				debug_info_builder,
 				debug_compile_unit,
@@ -250,24 +207,26 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 		debug_location
 	}
 	
-	fn variable(&mut self, ident: &Ident<'src>) -> Result<Variable<'ctx>, CompilerError> {
+	fn variable(&mut self, ident: &IdentNode<'src>) -> Result<Node<Variable<'ctx>>, CompilerError> {
 		Ok({
-			let key = ident.0;
+			let key = ident.inner().0;
 			if !self.variables.contains_key(key) {
-				let value = {
-					let mut name = String::new();
-					name.push_str("value_");
-					name.push_str(key);
+				let value_ptr = {
+					let name = format!("value_{key}");
 					self.variables_builder.build_alloca(self.external.variable, name.as_str())?
 				};
 
-				let is_set = {
-					let mut name = String::new();
-					name.push_str("is_set_");
-					name.push_str(key);
+				let is_set_ptr = {
+					let name = format!("is_set_{key}");
 					let alloca = self.variables_builder.build_alloca(self.context.i64_type(), name.as_str())?;
 					self.variables_builder.build_store(alloca, self.context.i64_type().const_zero())?;
 					alloca
+				};
+
+				let name_ptr = {
+					let name = format!("name_{key}");
+					let name_ptr = self.builder.build_global_string_ptr(key, name.as_str())?.as_pointer_value();
+					name_ptr
 				};
 
 				// TODO: This is broken with new variables system.
@@ -282,7 +241,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 					0,
 				);
 				self.debug_info_builder.insert_declare_at_end(
-					value,
+					value_ptr,
 					Some(debug_variable),
 					None,
 					self.get_debug_location(&Offset::new(0, 0)),
@@ -290,13 +249,14 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				);
 
 				let value = Variable {
-					value_ptr: value,
-					is_set_ptr: is_set,
+					name_ptr,
+					value_ptr,
+					is_set_ptr,
 				};
 
 				self.variables.insert(key, value);
 			}			
-			self.variables[key]
+			ident.span().node(self.variables[key])
 		})
 	}
 
@@ -362,60 +322,60 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 	fn build_list_range_check(
 		&self,
+		span: &Span,
 		list: PointerValue<'ctx>,
 		index: FloatValue<'ctx>,
 		upper_bound_add: FloatValue<'ctx>,
 	) -> CompilerResult<()> {
 		Ok({
-			// index < 0
-			{
-				let merge_block = self.context.append_basic_block(self.main_fn, "merge");
+			let merge_block = self.context.append_basic_block(self.main_fn, "merge");
+			let fail_block = self.context.append_basic_block(self.main_fn, "fial");
 
-				let index_lt_zero = self.builder.build_float_compare(
+			let lower_bound = self.context.f64_type().const_zero();
+
+			let call = self.builder.build_call(
+				self.external.pseudo_list_len,
+				&[
+					list.into(),
+				],
+				"pseudo_list_len",
+			)?;
+			let upper_bound = call.as_any_value_enum().into_float_value();
+			let upper_bound = self.builder.build_float_add(upper_bound, upper_bound_add, "tmp_add")?;
+
+			let fail = self.builder.build_or(
+				self.builder.build_float_compare(
 					FloatPredicate::OLT,
 					index,
-					self.context.f64_type().const_zero(),
-					"index_lt_zero",
-				)?;
-
-				self.builder.build_conditional_branch(
-					index_lt_zero,
-					self.fail_range_error,
-					merge_block,
-				)?;
-
-				self.builder.position_at_end(merge_block);
-			}
-
-			// index >= len
-			{
-				let merge_block = self.context.append_basic_block(self.main_fn, "merge");
-
-				let call = self.builder.build_call(
-					self.external.pseudo_list_len,
-					&[
-						list.into(),
-					],
-					"pseudo_list_len",
-				)?;
-				let list_len = call.as_any_value_enum().into_float_value();
-				let list_len = self.builder.build_float_add(list_len, upper_bound_add, "tmp_add")?;
-
-				let index_gt_len = self.builder.build_float_compare(
+					lower_bound,
+					"lower_bound",
+				)?,
+				self.builder.build_float_compare(
 					FloatPredicate::OGE,
 					index,
-					list_len,
-					"index_gt_len",
-				)?;
+					upper_bound,
+					"upper_bound",
+				)?,
+				"bounds_check",
+			)?;
 
-				self.builder.build_conditional_branch(
-					index_gt_len,
-					self.fail_range_error,
-					merge_block,
-				)?;
+			self.builder.build_conditional_branch(
+				fail,
+				fail_block,
+				merge_block,
+			)?;
 
-				self.builder.position_at_end(merge_block);
+			{
+				self.builder.position_at_end(fail_block);
+				self.build_fail_range_error(
+					span,
+					index,
+					lower_bound,
+					upper_bound,
+				)?;
 			}
+			
+			self.builder.position_at_end(merge_block);
 		})
 	}
 }

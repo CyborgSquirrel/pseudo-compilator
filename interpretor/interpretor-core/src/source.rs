@@ -2,7 +2,6 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::parse::{ParserErrorKind, ParserError};
 
-
 /// Offset in source code string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Offset {
@@ -138,11 +137,18 @@ impl<T> Node<T> {
 
 	pub fn map<F, U>(self, f: F) -> Node<U>
 	where
-		F: FnOnce(Span, T) -> U,
+		F: FnOnce(T) -> U,
 	{
 		Node(
 			self.0,
-			f(self.0, self.1)
+			f(self.1),
 		)
+	}
+}
+
+impl<T, E> Node<Result<T, E>> {
+	pub fn transpose(self) -> Result<Node<T>, E> {
+		let Node(span, inner) = self;
+		inner.map(|value| Node(span, value))
 	}
 }

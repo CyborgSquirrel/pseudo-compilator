@@ -1,24 +1,27 @@
 use inkwell::{values::{PointerValue, FloatValue, StructValue, IntValue}, IntPredicate, AddressSpace};
 use interpretor_sys::VariableKind;
 
-use crate::{Compiler, CompilerError};
+use crate::{Compiler, CompilerError, source::Node};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Variable<'ctx> {
+	pub name_ptr: PointerValue<'ctx>,
 	pub value_ptr: PointerValue<'ctx>,
 	pub is_set_ptr: PointerValue<'ctx>,
 }
 
-impl<'src, 'ctx> Variable<'ctx> {
+impl<'src, 'ctx> Node<Variable<'ctx>> {
 	pub fn build_set_check<'a>(
 		&'a self,
 		compiler: &mut Compiler<'src, 'ctx>,
-	) -> Result<SetVariable<'ctx>, CompilerError> {
+	) -> Result<Node<SetVariable<'ctx>>, CompilerError> {
 		Ok({
+			let Node(span, inner) = self;
+			
 			// TODO: Would be nice to dedup these checks.
 			let is_set = compiler.builder.build_load(
 				compiler.context.i64_type(),
-				self.is_set_ptr,
+				inner.is_set_ptr,
 				"load_is_set",
 			)?;
 
@@ -30,13 +33,18 @@ impl<'src, 'ctx> Variable<'ctx> {
 			)?;
 
 			let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
-			compiler.builder.build_conditional_branch(cmp, compiler.fail_variable_unset, merge_block)?;
+			let fail_block = compiler.context.append_basic_block(compiler.main_fn, "fail");
+			
+			compiler.builder.build_conditional_branch(cmp, fail_block, merge_block)?;
+
+			compiler.builder.position_at_end(fail_block);
+			compiler.build_fail_variable_unset(span, inner.name_ptr)?;
 
 			compiler.builder.position_at_end(merge_block);
 
-			SetVariable {
-				value_ptr: self.value_ptr,
-			}
+			span.node(
+				SetVariable { value_ptr: inner.value_ptr }
+			)
 		})
 	}
 
@@ -46,22 +54,24 @@ impl<'src, 'ctx> Variable<'ctx> {
 		rvalue: StructValue<'ctx>,
 	) -> Result<(), CompilerError> {
 		Ok({
+			let Node(_, inner) = self;
+			
 			// save previous value
-			let prev_value = compiler.builder.build_load(compiler.external.variable, self.value_ptr, "prev_value")?;
+			let prev_value = compiler.builder.build_load(compiler.external.variable, inner.value_ptr, "prev_value")?;
 			let prev_value_ptr = compiler.builder.build_alloca(compiler.external.variable, "prev_value_ptr")?;
 			compiler.builder.build_store(prev_value_ptr, prev_value)?;
 		
 			// perform store
-			compiler.builder.build_store(self.value_ptr, rvalue)?;
+			compiler.builder.build_store(inner.value_ptr, rvalue)?;
 
 			compiler.builder.build_store(
-				self.is_set_ptr,
+				inner.is_set_ptr,
 				compiler.context.i64_type().const_int(1, false),
 			)?;
 
 			// drop previous value, if it's a list
 			{
-				let x = SetVariable { value_ptr: prev_value_ptr, };
+				let x = SetVariable { value_ptr: prev_value_ptr };
 				let kind = x.build_load_kind(compiler)?;
 
     		let float_block = compiler.context.append_basic_block(compiler.main_fn, "float");
@@ -135,64 +145,6 @@ impl<'src, 'ctx> SetVariable<'ctx> {
 		})
 	}
 
-	pub fn build_check_kind(
-		&self,
-		compiler: &mut Compiler<'src, 'ctx>,
-		expected_kind: VariableKind,
-	) -> Result<(), CompilerError> {
-		Ok({
-			let kind = self.build_load_kind(compiler)?;
-			
-			let cmp = compiler.builder.build_int_compare(
-				IntPredicate::EQ,
-				kind,
-				compiler.context.i64_type().const_int(expected_kind as u64, false),
-				"type_check",
-			)?;
-
-			let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
-			compiler.builder.build_conditional_branch(cmp, merge_block, compiler.fail_type_error)?;
-
-			compiler.builder.position_at_end(merge_block);
-		})
-	}
-
-	pub fn build_load(
-		&self,
-		compiler: &mut Compiler<'src, 'ctx>,
-	) -> Result<StructValue<'ctx>, CompilerError> {
-		Ok({
-			compiler.builder.build_load(
-				compiler.external.variable,
-				self.value_ptr,
-				"load",
-			)?.into_struct_value()
-		})
-	}
-
-	pub fn build_load_float(
-		&self,
-		compiler: &mut Compiler<'src, 'ctx>,
-	) -> Result<FloatValue<'ctx>, CompilerError> {
-		Ok({
-			self.build_check_kind(compiler, VariableKind::Float)?;
-			
-			let inner_ptr = compiler.builder.build_struct_gep(
-				compiler.external.variable_float,
-				self.value_ptr,
-				1,
-				"gep_inner",
-			)?;
-			let inner = compiler.builder.build_load(
-				compiler.context.f64_type(),
-				inner_ptr,
-				"load_inner",
-			)?.into_float_value();
-
-			inner
-		})
-	}
-
 	pub fn build_load_list_unchecked(
 		&self,
 		compiler: &mut Compiler<'src, 'ctx>,
@@ -214,13 +166,87 @@ impl<'src, 'ctx> SetVariable<'ctx> {
 		})
 	}
 
+}
+
+impl<'src, 'ctx> Node<SetVariable<'ctx>> {
+	pub fn build_check_kind(
+		&self,
+		compiler: &mut Compiler<'src, 'ctx>,
+		expected_kind: VariableKind,
+	) -> Result<(), CompilerError> {
+		Ok({
+			let kind = self.inner().build_load_kind(compiler)?;
+			
+			let cmp = compiler.builder.build_int_compare(
+				IntPredicate::EQ,
+				kind,
+				compiler.context.i64_type().const_int(expected_kind as u64, false),
+				"type_check",
+			)?;
+
+			let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
+			let fail_block = compiler.context.append_basic_block(compiler.main_fn, "fail");
+			compiler.builder.build_conditional_branch(cmp, merge_block, fail_block)?;
+
+			{
+				compiler.builder.position_at_end(fail_block);
+				compiler.build_fail_type_error(
+					self.span(),
+					kind,
+					expected_kind,
+				)?;
+			}
+
+			compiler.builder.position_at_end(merge_block);
+		})
+	}
+
+	pub fn build_load(
+		&self,
+		compiler: &mut Compiler<'src, 'ctx>,
+	) -> Result<StructValue<'ctx>, CompilerError> {
+		Ok({
+			let Node(_, inner) = self;
+			compiler.builder.build_load(
+				compiler.external.variable,
+				inner.value_ptr,
+				"load",
+			)?.into_struct_value()
+		})
+	}
+
+	pub fn build_load_float(
+		&self,
+		compiler: &mut Compiler<'src, 'ctx>,
+	) -> Result<FloatValue<'ctx>, CompilerError> {
+		Ok({
+			self.build_check_kind(compiler, VariableKind::Float)?;
+
+			let Node(_, inner) = self;
+			
+			let inner_ptr = compiler.builder.build_struct_gep(
+				compiler.external.variable_float,
+				inner.value_ptr,
+				1,
+				"gep_inner",
+			)?;
+			let inner = compiler.builder.build_load(
+				compiler.context.f64_type(),
+				inner_ptr,
+				"load_inner",
+			)?.into_float_value();
+
+			inner
+		})
+	}
+
 	pub fn build_load_list(
 		&self,
 		compiler: &mut Compiler<'src, 'ctx>,
 	) -> Result<PointerValue<'ctx>, CompilerError> {
 		Ok({
 			self.build_check_kind(compiler, VariableKind::List)?;
-			self.build_load_list_unchecked(compiler)?
+			self.inner().build_load_list_unchecked(compiler)?
 		})
 	}
 }

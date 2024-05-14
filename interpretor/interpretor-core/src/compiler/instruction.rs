@@ -33,7 +33,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for AtribuireRvalue<'src> {
     	AtribuireRvalue::Unknown(ident) => {
     		let x = compiler.variable(ident)?;
     		let x = x.build_set_check(compiler)?;
-    		let kind = x.build_load_kind(compiler)?;
+    		let kind = x.inner().build_load_kind(compiler)?;
 
     		let value_ptr = compiler.builder.build_alloca(compiler.external.variable, "value")?;
 
@@ -72,7 +72,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for AtribuireRvalue<'src> {
     		// assignment.
     		{
 	    		compiler.builder.position_at_end(list_block);
-	    		let list = x.build_load_list_unchecked(compiler)?;
+	    		let list = x.inner().build_load_list_unchecked(compiler)?;
 
 	    		// clone the list
 					let call = compiler.builder.build_call(
@@ -84,11 +84,11 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for AtribuireRvalue<'src> {
 					)?;
 					let list = call.as_any_value_enum().into_pointer_value();
 
-					let blah_ptr = compiler.build_list_struct(list)?;
-					let blah = compiler.builder.build_load(compiler.external.variable, blah_ptr, "")?;
+					let cloned_list_ptr = compiler.build_list_struct(list)?;
+					let cloned_list = compiler.builder.build_load(compiler.external.variable, cloned_list_ptr, "")?;
 					compiler.builder.build_store(
 						value_ptr,
-						blah,
+						cloned_list,
 					)?;
 
 	    		compiler.builder.build_unconditional_branch(merge_block)?;
@@ -218,7 +218,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 					let value = value.compile(compiler)?;
 					let list = compiler.variable(list)?.build_set_check(compiler)?.build_load_list(compiler)?;
 
-					compiler.build_list_range_check(list, index, compiler.context.f64_type().const_float(1.0))?;
+					compiler.build_list_range_check(instruction.span(), list, index, compiler.context.f64_type().const_float(1.0))?;
 
 					compiler.builder.build_call(
 						compiler.external.pseudo_list_insert,
@@ -234,7 +234,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 					let index = index.compile(compiler)?;
 					let list = compiler.variable(list)?.build_set_check(compiler)?.build_load_list(compiler)?;
 
-					compiler.build_list_range_check(list, index, compiler.context.f64_type().const_zero())?;
+					compiler.build_list_range_check(instruction.span(), list, index, compiler.context.f64_type().const_zero())?;
 
 					compiler.builder.build_call(
 						compiler.external.pseudo_list_remove,

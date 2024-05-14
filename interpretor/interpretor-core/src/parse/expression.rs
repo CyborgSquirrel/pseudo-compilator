@@ -6,8 +6,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::{get_grapheme_kind, GraphemeKind, ValueTypeFlags, ValueType, line::LineCursor, ParserErrorKind, ParserError};
 use crate::{ast::{
 	Ident,
-	FloatUnop, FloatBinop, BoolBinop, FloatRvalue, BoolRvalue, BoolUnop, BoolBoolBinop, BoolFloatBinop, ListRvalue, FloatLvalue, ListLvalue, Lvalue
-}, parse::Word, source::Node};
+	FloatUnop, FloatBinop, BoolBinop, FloatRvalue, BoolRvalue, BoolUnop, BoolBoolBinop, BoolFloatBinop, ListRvalue, FloatLvalue, ListLvalue, Lvalue, IdentNode, BoolRvalueNode, FloatRvalueNode, ListRvalueNode, UnknownRvalue, UnknownRvalueNode
+}, parse::Word, source::{Node, Span}};
 use super::line::ParserIntermediateResult;
 
 macro_rules! any {
@@ -64,75 +64,93 @@ impl From<LvalueError> for ParserErrorKind {
 	}
 }
 
-pub fn convert_node<'src, F, Out, Err>(
-	f: F,
-	node: Node<Operand<'src>>,
-) -> std::result::Result<Node<Out>, ParserError>
-where
-	F: FnOnce(Operand<'src>) -> std::result::Result<Out, Err>,
-	Err: Into<ParserErrorKind>,
-{
-	let Node(span, inner) = node;
-	let result = f(inner).map_err(|err| span.0.make_err(err)).map(|inner| Node(span, inner));
-	result
-}
-
 #[derive(Debug)]
 pub enum Operand<'src> {
-	Ident(Ident<'src>),
-	BoolRvalue(BoolRvalue<'src>),
-	FloatRvalue(FloatRvalue<'src>),
+	Ident(IdentNode<'src>),
+	UnknownRvalue(UnknownRvalueNode<'src>),
+	BoolRvalue(BoolRvalueNode<'src>),
+	FloatRvalue(FloatRvalueNode<'src>),
 }
 
 impl<'src> Operand<'src> {
-	pub fn into_bool(self) -> std::result::Result<BoolRvalue<'src>, TypeError> {
+	pub fn span(&self) -> Span {
+		match self {
+			Operand::Ident(Node(span, _)) => *span,
+			Operand::UnknownRvalue(Node(span, _)) => *span,
+			Operand::BoolRvalue(Node(span, _)) => *span,
+			Operand::FloatRvalue(Node(span, _)) => *span,
+		}
+	}
+	
+	pub fn into_bool(self) -> std::result::Result<BoolRvalueNode<'src>, ParserError> {
 		Ok(
 			match self {
 				Operand::BoolRvalue(value) => value,
-				_ => return Err(TypeError(make_bitflags!(ValueType::{Bool}))),
+				_ => {
+					return Err(self.span().0.make_err(ParserErrorKind::ExpectedValueType(make_bitflags!(ValueType::{Bool}))));
+				}
 			}
 		)
 	}
 
-	pub fn into_float(self) -> std::result::Result<FloatRvalue<'src>, TypeError> {
+	pub fn into_float(self) -> std::result::Result<FloatRvalueNode<'src>, ParserError> {
 		Ok(
 			match self {
 				Operand::FloatRvalue(value) => value,
-				Operand::Ident(value) => FloatRvalue::Lvalue(FloatLvalue::Variable(value)),
-				_ => return Err(TypeError(make_bitflags!(ValueType::{Float}))),
+				Operand::Ident(value) => {
+					let span = *value.span();
+					let lvalue = span.node(FloatLvalue::Variable(value));
+					let rvalue = span.node(FloatRvalue::Lvalue(lvalue));
+					rvalue
+				}
+				_ => {
+					return Err(self.span().0.make_err(ParserErrorKind::ExpectedValueType(make_bitflags!(ValueType::{Float}))));
+				}
 			}
 		)
 	}
 
-	pub fn into_list(self) -> std::result::Result<ListRvalue<'src>, TypeError> {
+	pub fn into_list(self) -> std::result::Result<ListRvalueNode<'src>, ParserError> {
 		Ok(
 			match self {
-				Operand::Ident(value) => ListRvalue::Lvalue(ListLvalue::Variable(value)),
-				_ => return Err(TypeError(make_bitflags!(ValueType::{List}))),
+				Operand::Ident(value) => {
+					let span = *value.span();
+					span.node(ListRvalue::Lvalue(ListLvalue::Variable(value)))
+				}
+				_ => {
+					return Err(self.span().0.make_err(ParserErrorKind::ExpectedValueType(make_bitflags!(ValueType::{List}))));
+				}
 			}
 		)
 	}
 
-	pub fn into_ident(self) -> std::result::Result<Ident<'src>, IdentError> {
+	pub fn into_ident(self) -> std::result::Result<IdentNode<'src>, ParserError> {
 		Ok(
 			match self {
 				Operand::Ident(value) => value,
-				_ => return Err(IdentError),
+				_ => {
+					return Err(self.span().0.make_err(ParserErrorKind::ExpectedIdent));
+				}
 			}
 		)
 	}
 
-	pub fn into_lvalue(self) -> std::result::Result<Lvalue<'src>, LvalueError> {
-		Ok(
+	pub fn into_lvalue(self) -> std::result::Result<Lvalue<'src>, ParserError> {
+		Ok({
+			let span = self.span();
 			match self {
 				Operand::Ident(value) => Lvalue::Unknown(value),
-				Operand::FloatRvalue(value) => match value {
+				Operand::FloatRvalue(value) => match value.into_inner() {
 					FloatRvalue::Lvalue(value) => Lvalue::Float(value),
-					_ => return Err(LvalueError),
+					_ => {
+						return Err(span.0.make_err(ParserErrorKind::ExpectedLvalue));
+					}
 				}
-				_ => return Err(LvalueError),
+				_ => {
+					return Err(self.span().0.make_err(ParserErrorKind::ExpectedLvalue));
+				}
 			}
-		)
+		})
 	}
 }
 
@@ -239,7 +257,7 @@ struct Parser<'src> {
 	
 	cursor: LineCursor<'src>,
 	expecting: ExpectingFlags,
-	operands: Vec<Node<Operand<'src>>>,
+	operands: Vec<Operand<'src>>,
 	operators: Vec<Node<Operator>>,
 }
 
@@ -271,7 +289,7 @@ impl<'src> Parser<'src> {
 		
 		let (new_cursor, grapheme_0) = unwrap_or_return!(self.cursor.read_one(), false);
 		let op = match grapheme_0 {
-			"+" => FloatUnop::Ident,
+			"+" => FloatUnop::Identity,
 			"-" => FloatUnop::Neg,
 			_ => return false,
 		};
@@ -328,35 +346,54 @@ impl<'src> Parser<'src> {
 		let parens_span = lparen_span.merge(&rparen_span);
 
 		let result = match op {
-			// if it's an Ident, simply ignore it
 			ParenKind::Ident => {
-				let x = self.operands.pop().unwrap().into_inner();
-				parens_span.node(x)
+				let x = self.operands.pop().unwrap();
+				match x {
+					Operand::Ident(x) => {
+						let span = *x.span();
+						let rvalue = span.node(UnknownRvalue::Ident(x));
+						let rvalue = parens_span.node(UnknownRvalue::Identity(Box::new(rvalue)));
+						Operand::UnknownRvalue(rvalue)
+					}
+					Operand::UnknownRvalue(x) => {
+						let rvalue = parens_span.node(UnknownRvalue::Identity(Box::new(x)));
+						Operand::UnknownRvalue(rvalue)
+					}
+					Operand::BoolRvalue(x) => {
+						let rvalue = BoolRvalue::BoolUnop(BoolUnop::Identity, Box::new(x));
+						Operand::BoolRvalue(parens_span.node(rvalue))
+					}
+					Operand::FloatRvalue(x) => {
+						let rvalue = FloatRvalue::Unop(FloatUnop::Identity, Box::new(x));
+						Operand::FloatRvalue(parens_span.node(rvalue))
+					}
+				}
 			}
 			ParenKind::IntegralPart => {
-				let Node(_, x) = convert_node(Operand::into_float, self.operands.pop().unwrap())?;
-				let operand = Operand::FloatRvalue(FloatRvalue::Unop(FloatUnop::IntegralPart, Box::new(x)));
-				parens_span.node(operand)
+				let x = self.operands.pop().unwrap().into_float()?;
+				let rvalue = FloatRvalue::Unop(FloatUnop::IntegralPart, Box::new(x));
+				Operand::FloatRvalue(parens_span.node(rvalue))
 			}
 			ParenKind::Index => {
-				let Node(_, y) = convert_node(Operand::into_float, self.operands.pop().unwrap())?;
-				let Node(x_span, x) = convert_node(Operand::into_list, self.operands.pop().unwrap())?;
-				let span = x_span.merge(&parens_span);
-				let operand = Operand::FloatRvalue(FloatRvalue::Lvalue(FloatLvalue::ListElement(x, Box::new(y))));
-				span.node(operand)
+				let y = self.operands.pop().unwrap().into_float()?;
+				let x = self.operands.pop().unwrap().into_list()?;
+				let span = x.span().merge(&parens_span);
+				let lvalue = span.node(FloatLvalue::ListElement(x, Box::new(y)));
+				let rvalue = span.node(FloatRvalue::Lvalue(lvalue));
+				Operand::FloatRvalue(rvalue)
 			}
 			ParenKind::FunctionCall => {
 				let y = self.operands.pop().unwrap();
-				let Node(x_span, x) = convert_node(Operand::into_ident, self.operands.pop().unwrap())?;
-				match x.0 {
+				let x = self.operands.pop().unwrap().into_ident()?;
+				match x.inner().0 {
 					"lungime" => {
-						let Node(_, y) = convert_node(Operand::into_list, y)?;
-						let operand = Operand::FloatRvalue(FloatRvalue::ListLength(y));
-						let span = x_span.merge(&parens_span);
-						span.node(operand)
+						let y = y.into_list()?;
+						let rvalue = FloatRvalue::ListLength(y);
+						let span = x.span().merge(&parens_span);
+						Operand::FloatRvalue(span.node(rvalue))
 					}
-					_ => {
-						return Err(self.cursor.offset.make_err(ParserErrorKind::InvalidFunction(String::from(x.0))));
+					value => {
+						return Err(self.cursor.offset.make_err(ParserErrorKind::InvalidFunction(String::from(value))));
 					}
 				}
 			}
@@ -375,20 +412,20 @@ impl<'src> Parser<'src> {
 
 		let rvalue = match unwrap_or_return!(name.graphemes(true).next(), Ok(false)) {
 			"0"|"1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => match name.parse() {
-				Ok(literal) => Operand::FloatRvalue(FloatRvalue::Literal(literal)),
+				Ok(literal) => Operand::FloatRvalue(span.node(FloatRvalue::Literal(literal))),
 				Err(..) => return Err(self.cursor.offset.make_err(ParserErrorKind::InvalidFloatLiteral)),
 			}
 			_ => {
 				let word = Word::from_name(name);
 				if word.as_ref().map(Word::can_be_ident).unwrap_or(true) {
-					Operand::Ident(Ident(name))
+					Operand::Ident(span.node(Ident(name)))
 				} else {
 					return Err(self.cursor.offset.make_err(ParserErrorKind::InvalidIdent(String::from(name))));
 				}
 			}
 		};
 		
-		self.operands.push(span.node(rvalue));
+		self.operands.push(rvalue);
 		self.expecting = make_bitflags!(Expecting::{Operator});
 		self.cursor = new_cursor;
 
@@ -405,13 +442,10 @@ impl<'src> Parser<'src> {
 				match op {
 					BoolOrFloatUnop::BoolUnop(_) => unreachable!(),
 					BoolOrFloatUnop::FloatUnop(op) => {
-						let Node(x_span, x) = convert_node(Operand::into_float, x)?;
-						let operand = Operand::FloatRvalue(FloatRvalue::Unop(op, Box::new(x)));
-						Node(
-							op_span.merge(&x_span),
-							operand,
-						)
-						// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatUnopOperands(op))),
+						let x = x.into_float()?;
+						let span = op_span.merge(x.span());
+						let rvalue = FloatRvalue::Unop(op, Box::new(x));
+						Operand::FloatRvalue(span.node(rvalue))
 					}
 				}
 			}
@@ -420,35 +454,26 @@ impl<'src> Parser<'src> {
 				let x = self.operands.pop().unwrap();
 				match op {
 					BoolOrFloatBinop::FloatBinop(op) => {
-						let Node(y_span, y) = convert_node(Operand::into_float, y)?;
-						let Node(x_span, x) = convert_node(Operand::into_float, x)?;
-						let operand = Operand::FloatRvalue(FloatRvalue::Binop(op, Box::new(x), Box::new(y)));
-						Node(
-							x_span.merge(&op_span).merge(&y_span),
-							operand,
-						)
-						// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidFloatBinopOperands(op))),
+						let y = y.into_float()?;
+						let x = x.into_float()?;
+						let span = x.span().merge(&op_span).merge(y.span());
+						let rvalue = FloatRvalue::Binop(op, Box::new(x), Box::new(y));
+						Operand::FloatRvalue(span.node(rvalue))
 					}
 					BoolOrFloatBinop::BoolBinop(op) => match op {
 						BoolBinop::BoolFloatBinop(op) => {
-							let Node(y_span, y) = convert_node(Operand::into_float, y)?;
-							let Node(x_span, x) = convert_node(Operand::into_float, x)?;
-							let operand = Operand::BoolRvalue(BoolRvalue::BoolFloatBinop(op, x, y));
-							Node(
-								x_span.merge(&op_span).merge(&y_span),
-								operand,
-							)
-							// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidBoolFloatBinopOperands(op))),
+							let y = y.into_float()?;
+							let x = x.into_float()?;
+							let span = x.span().merge(&op_span).merge(y.span());
+							let rvalue = BoolRvalue::BoolFloatBinop(op, x, y);
+							Operand::BoolRvalue(span.node(rvalue))
 						}
 						BoolBinop::BoolBoolBinop(op) => {
-							let Node(y_span, y) = convert_node(Operand::into_bool, y)?;
-							let Node(x_span, x) = convert_node(Operand::into_bool, x)?;
-							let operand = Operand::BoolRvalue(BoolRvalue::BoolBoolBinop(op, Box::new(x), Box::new(y)));
-							Node(
-								x_span.merge(&op_span).merge(&y_span),
-								operand,
-							)
-							// _ => return Err(self.cursor.make_error(LineParsingErrorKind::InvalidBoolBoolBinopOperands(op))),
+							let y = y.into_bool()?;
+							let x = x.into_bool()?;
+							let span = x.span().merge(&op_span).merge(y.span());
+							let rvalue = BoolRvalue::BoolBoolBinop(op, Box::new(x), Box::new(y));
+							Operand::BoolRvalue(span.node(rvalue))
 						}
 					}
 				}
@@ -576,7 +601,7 @@ impl<'src> Parser<'src> {
 		)
 	}
 	
-	fn parse(mut self) -> ParserIntermediateResult<'src, Node<Operand<'src>>> {
+	fn parse(mut self) -> ParserIntermediateResult<'src, Operand<'src>> {
 		while self.parse_expecting()? { }
 		if !self.expecting.contains(Expecting::Operator) {
 			Err(self.cursor.offset.make_err(ParserErrorKind::ExpectedSomethingElse(self.expecting)))
@@ -591,18 +616,18 @@ impl<'src> Parser<'src> {
 }
 
 impl<'src> LineCursor<'src> {
-	pub fn parse_float_rvalue(self) -> ParserIntermediateResult<'src, FloatRvalue<'src>> {
+	pub fn parse_float_rvalue(self) -> ParserIntermediateResult<'src, FloatRvalueNode<'src>> {
 		Ok({
 			let (new_self, operand) = self.parse_operand()?;
-			let rvalue = convert_node(Operand::into_float, operand)?.into_inner();
+			let rvalue = operand.into_float()?;
 			(new_self, rvalue)
 		})
 	}
 	
-	pub fn parse_bool_rvalue(self) -> ParserIntermediateResult<'src, BoolRvalue<'src>> {
+	pub fn parse_bool_rvalue(self) -> ParserIntermediateResult<'src, BoolRvalueNode<'src>> {
 		Ok({
 			let (new_self, operand) = self.parse_operand()?;
-			let rvalue = convert_node(Operand::into_bool, operand)?.into_inner();
+			let rvalue = operand.into_bool()?;
 			(new_self, rvalue)
 		})
 	}
@@ -611,12 +636,12 @@ impl<'src> LineCursor<'src> {
 		Ok({
 			let parser = Parser::new(self, false);
 			let (new_self, operand) = parser.parse()?;
-			let lvalue = convert_node(Operand::into_lvalue, operand)?.into_inner();
+			let lvalue = operand.into_lvalue()?;
 			(new_self, lvalue)
 		})
 	}
 	
-	pub fn parse_operand(self) -> ParserIntermediateResult<'src, Node<Operand<'src>>> {
+	pub fn parse_operand(self) -> ParserIntermediateResult<'src, Operand<'src>> {
 		Ok({
 			let parser = Parser::new(self, true);
 			let (new_self, operand) = parser.parse()?;

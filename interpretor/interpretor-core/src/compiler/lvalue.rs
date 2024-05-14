@@ -1,6 +1,6 @@
 use inkwell::values::{FloatValue, StructValue, AnyValue};
 
-use crate::{Compiler, CompilerError, ast::{Lvalue, FloatLvalue, ListLvalue}};
+use crate::{Compiler, CompilerError, ast::{Lvalue, FloatLvalue, ListLvalue}, source::Node};
 
 use super::{Compile, variable::SetVariable};
 
@@ -19,7 +19,7 @@ pub trait CompileLvalue<'src, 'ctx> {
 	) -> Result<Self::Output, CompilerError>;
 }
 
-impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for FloatLvalue<'src> {
+impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for Node<FloatLvalue<'src>> {
 	type Output = FloatValue<'ctx>;
 
 	fn compile_store(
@@ -27,17 +27,18 @@ impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for FloatLvalue<'src> {
 		compiler: &mut Compiler<'src, 'ctx>,
 		value: StructValue<'ctx>,
 	) -> Result<(), CompilerError> {
-		Ok(match self {
+		Ok(match self.inner() {
 			FloatLvalue::Variable(_) => unreachable!(),
 			FloatLvalue::ListElement(list, index) => {
 				let inner = list.compile(compiler)?;
 				let index = index.compile(compiler)?;
 
-				compiler.build_list_range_check(inner, index, compiler.context.f64_type().const_zero())?;
+				compiler.build_list_range_check(self.span(), inner, index, compiler.context.f64_type().const_zero())?;
 
 				let value_ptr = compiler.builder.build_alloca(compiler.external.variable, "value_ptr")?;
 				compiler.builder.build_store(value_ptr, value)?;
 				let value = SetVariable { value_ptr };
+				let value = self.span().node(value);
 				let value = value.build_load_float(compiler)?;
 
 				compiler.builder.build_call(
@@ -57,7 +58,7 @@ impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for FloatLvalue<'src> {
 		&self,
 		compiler: &mut Compiler<'src, 'ctx>,
 	) -> Result<Self::Output, CompilerError> {
-		Ok(match self {
+		Ok(match self.inner() {
 			FloatLvalue::Variable(ident) => {
 				let x = compiler.variable(ident)?;
 				x.build_set_check(compiler)?.build_load_float(compiler)?
@@ -66,7 +67,7 @@ impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for FloatLvalue<'src> {
 				let inner = list.compile(compiler)?;
 				let index = index.compile(compiler)?;
 
-				compiler.build_list_range_check(inner, index, compiler.context.f64_type().const_zero())?;
+				compiler.build_list_range_check(self.span(), inner, index, compiler.context.f64_type().const_zero())?;
 
 				let call = compiler.builder.build_call(
 					compiler.external.pseudo_list_get_item,

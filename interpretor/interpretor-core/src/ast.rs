@@ -4,71 +4,131 @@ pub type InstructiuneNode<'src> = Node<Instructiune<'src>>;
 
 #[derive(Debug)]
 pub enum Instructiune<'src> {
-	Atribuire(Lvalue<'src>, AtribuireRvalue<'src>),
-	Interschimbare(Lvalue<'src>, Lvalue<'src>),
-	Insereaza(Ident<'src>, FloatRvalue<'src>, FloatRvalue<'src>),
-	Sterge(Ident<'src>, FloatRvalue<'src>),
-	Scrie(Vec<ScrieParam<'src>>),
-	Citeste(Vec<Lvalue<'src>>),
-	DacaAtunciAltfel(BoolRvalue<'src>, Vec<InstructiuneNode<'src>>, Option<Vec<InstructiuneNode<'src>>>),
-	CatTimpExecuta(BoolRvalue<'src>, Vec<InstructiuneNode<'src>>),
-	PentruExecuta(Ident<'src>, FloatRvalue<'src>, FloatRvalue<'src>, Option<FloatRvalue<'src>>, Vec<InstructiuneNode<'src>>),
-	RepetaPanaCand(Vec<InstructiuneNode<'src>>, BoolRvalue<'src>),
+	Atribuire(
+		/// Lvalue
+		Lvalue<'src>,
+		/// Rvalue
+		AtribuireRvalue<'src>,
+	),
+	Interschimbare(
+		/// Left
+		Lvalue<'src>,
+		/// Right
+		Lvalue<'src>,
+	),
+	Insereaza(
+		// List
+		IdentNode<'src>,
+		// Index
+		FloatRvalueNode<'src>,
+		/// Value
+		FloatRvalueNode<'src>,
+	),
+	Sterge(
+		/// List
+		IdentNode<'src>,
+		/// Index
+		FloatRvalueNode<'src>,
+	),
+	Scrie(
+		Vec<ScrieParam<'src>>,
+	),
+	Citeste(
+		Vec<Lvalue<'src>>,
+	),
+	DacaAtunciAltfel(
+		/// Conditie
+		BoolRvalueNode<'src>,
+		/// Atunci branch
+		Vec<InstructiuneNode<'src>>,
+		/// Altfel branch
+		Option<Vec<InstructiuneNode<'src>>>,
+	),
+	CatTimpExecuta(
+		/// Conditie
+		BoolRvalueNode<'src>,
+		/// Repeated instructions
+		Vec<InstructiuneNode<'src>>,
+	),
+	PentruExecuta(
+		/// Contor
+		IdentNode<'src>,
+		/// Start
+		FloatRvalueNode<'src>,
+		/// Stop
+		FloatRvalueNode<'src>,
+		/// Increment
+		Option<FloatRvalueNode<'src>>,
+		/// Repeated instructions
+		Vec<InstructiuneNode<'src>>
+	),
+	RepetaPanaCand(
+		/// Repeated instructions
+		Vec<InstructiuneNode<'src>>,
+		/// Conditie
+		BoolRvalueNode<'src>,
+	),
 }
 
+// special params for particular instructions
 #[derive(Debug)]
 pub enum ScrieParam<'src> {
-	Rvalue(FloatRvalue<'src>),
+	Rvalue(FloatRvalueNode<'src>),
 	StringLiteral(&'src str),
 	CharacterLiteral(&'src str),
 }
 
 #[derive(Debug)]
 pub enum AtribuireRvalue<'src> {
-	Float(FloatRvalue<'src>),
-	List(ListRvalue<'src>),
-	Unknown(Ident<'src>),
+	Float(FloatRvalueNode<'src>),
+	List(ListRvalueNode<'src>),
+	Unknown(IdentNode<'src>),
 }
+
+// expressions
+#[derive(Debug)]
+pub struct Ident<'src>(pub &'src str);
+pub type IdentNode<'src> = Node<Ident<'src>>;
 
 #[derive(Debug)]
 pub enum Lvalue<'src> {
-	Float(FloatLvalue<'src>),
+	Float(FloatLvalueNode<'src>),
 	List(ListLvalue<'src>),
-	Unknown(Ident<'src>),
+	Unknown(IdentNode<'src>),
 }
 
-// float stuff
-#[derive(Debug)]
-pub struct Ident<'src> (pub &'src str);
-
+// float expressions
 #[derive(Debug)]
 pub enum FloatLvalue<'src> {
-	Variable(Ident<'src>),
-	ListElement(ListRvalue<'src>, Box<FloatRvalue<'src>>),
+	Variable(IdentNode<'src>),
+	ListElement(ListRvalueNode<'src>, Box<FloatRvalueNode<'src>>),
 }
+pub type FloatLvalueNode<'src> = Node<FloatLvalue<'src>>;
 
 #[derive(Debug)]
 pub enum FloatRvalue<'src> {
-	Lvalue(FloatLvalue<'src>),
+	Lvalue(FloatLvalueNode<'src>),
 	Literal(f32),
-	Unop(FloatUnop, Box<FloatRvalue<'src>>),
-	ListLength(ListRvalue<'src>),
-	Binop(FloatBinop, Box<FloatRvalue<'src>>, Box<FloatRvalue<'src>>),
+	Unop(FloatUnop, Box<FloatRvalueNode<'src>>),
+	ListLength(ListRvalueNode<'src>),
+	Binop(FloatBinop, Box<FloatRvalueNode<'src>>, Box<FloatRvalueNode<'src>>),
+	Unknown(UnknownRvalueNode<'src>),
 }
+pub type FloatRvalueNode<'src> = Node<FloatRvalue<'src>>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum FloatUnop { Ident, Neg, IntegralPart }
+pub enum FloatUnop { Identity, Neg, IntegralPart }
 impl FloatUnop {
 	pub fn evaluate(&self, x: f32) -> f32 {
 		match self {
-			FloatUnop::Ident => x,
+			FloatUnop::Identity => x,
 			FloatUnop::Neg   => -x,
 			FloatUnop::IntegralPart => x.floor(),
 		}
 	}
 	pub fn get_str(&self) -> &'static str {
 		match self {
-			FloatUnop::Ident => "+",
+			FloatUnop::Identity => "+",
 			FloatUnop::Neg   => "-",
 			FloatUnop::IntegralPart => "[...]",
 		}
@@ -98,15 +158,17 @@ impl FloatBinop {
 	}
 }
 
-// bool stuff
+// bool expressions
 #[derive(Debug)]
-pub enum BoolRvalue<'a> {
-	BoolFloatBinop(BoolFloatBinop, FloatRvalue<'a>, FloatRvalue<'a>),
-	BoolBoolBinop(BoolBoolBinop, Box<BoolRvalue<'a>>, Box<BoolRvalue<'a>>),
+pub enum BoolRvalue<'src> {
+	BoolUnop(BoolUnop, Box<BoolRvalueNode<'src>>),
+	BoolFloatBinop(BoolFloatBinop, FloatRvalueNode<'src>, FloatRvalueNode<'src>),
+	BoolBoolBinop(BoolBoolBinop, Box<BoolRvalueNode<'src>>, Box<BoolRvalueNode<'src>>),
 }
+pub type BoolRvalueNode<'src> = Node<BoolRvalue<'src>>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum BoolUnop { Ident }
+pub enum BoolUnop { Identity }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BoolFloatBinop {
@@ -163,13 +225,24 @@ pub enum BoolBinop {
 	BoolBoolBinop(BoolBoolBinop),
 }
 
+// list expressions
 #[derive(Debug)]
-pub enum ListLvalue<'a> {
-	Variable(Ident<'a>),
+pub enum ListLvalue<'src> {
+	Variable(IdentNode<'src>),
 }
 
 #[derive(Debug)]
-pub enum ListRvalue<'a> {
-	Literal(Vec<FloatRvalue<'a>>),
-	Lvalue(ListLvalue<'a>),
+pub enum ListRvalue<'src> {
+	Literal(Vec<FloatRvalueNode<'src>>),
+	Lvalue(ListLvalue<'src>),
+	Unknown(UnknownRvalueNode<'src>),
 }
+pub type ListRvalueNode<'src> = Node<ListRvalue<'src>>;
+
+// unknown expressions
+#[derive(Debug)]
+pub enum UnknownRvalue<'src> {
+	Ident(IdentNode<'src>),
+	Identity(Box<UnknownRvalueNode<'src>>),
+}
+pub type UnknownRvalueNode<'src> = Node<UnknownRvalue<'src>>;

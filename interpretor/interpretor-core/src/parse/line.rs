@@ -3,11 +3,11 @@ use enumflags2::make_bitflags;
 use crate::{ast::{
 	Instructiune,
 	ScrieParam,
-	Ident, FloatUnop, FloatBinop, BoolFloatBinop, BoolBoolBinop, InstructiuneNode, FloatRvalue, AtribuireRvalue, ListRvalue, Lvalue}, source::{Offset, Node, Span}};
+	Ident, InstructiuneNode, AtribuireRvalue, ListRvalue, Lvalue, FloatRvalueNode, IdentNode}, source::{Offset, Node, Span}};
 use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{ValueTypeFlags, expression::{self, convert_node, Operand}, Arrow, ValueType, Word, get_grapheme_kind, GraphemeKind, ParserError, ParserErrorKind};
+use super::{expression::{self}, Arrow, ValueType, Word, get_grapheme_kind, GraphemeKind, ParserError, ParserErrorKind};
 
 pub type ParserIntermediateResult<'src, T> = Result<(LineCursor<'src>, T), ParserError>;
 pub type ParserResult<T> = Result<T, ParserError>;
@@ -116,17 +116,20 @@ impl<'src> LineCursor<'src> {
 		}
 	}
 
-	fn parse_ident(self) -> ParserIntermediateResult<'src, Ident<'src>> {
+	fn parse_ident(self) -> ParserIntermediateResult<'src, IdentNode<'src>> {
 		Ok({
+			let start_offset = self.offset;
 			let new_self = self;
 			let (new_self, (name, word)) = new_self.parse_word()?;
-			if word.is_some() {
+			if !word.as_ref().map(Word::can_be_ident).unwrap_or(true) {
 				return Err(new_self.offset.make_err(ParserErrorKind::InvalidIdent(String::from(name))))
 			}
 			if name.is_empty() {
 				return Err(new_self.offset.make_err(ParserErrorKind::ExpectedIdent))
 			}
-			(new_self, Ident(name))
+			let span = start_offset.span(&new_self.offset);
+			let ident = Ident(name);
+			(new_self, span.node(ident))
 		})
 	}
 
@@ -208,7 +211,7 @@ impl<'src> LineCursor<'src> {
 		}
 	}
 	
-	fn parse_assignment_list_element(self) -> ParserIntermediateResult<'src, Option<FloatRvalue<'src>>> {
+	fn parse_assignment_list_element(self) -> ParserIntermediateResult<'src, Option<FloatRvalueNode<'src>>> {
 		Ok({
 			let new_self = self;
 			let new_self = new_self.skip_spaces();
@@ -227,21 +230,27 @@ impl<'src> LineCursor<'src> {
 			let new_self = self;
 			let new_self = new_self.skip_spaces();
 
+			let start_offset = self.offset;
+
 			// see if it's an empty list
-			if let Ok((new_self, _)) = new_self.expect_str(",") {
-				let new_self = new_self.skip_spaces();
-				if new_self.expect_str(";").is_ok() || new_self.expect_end().is_ok() {
-					let instruction = Instructiune::Atribuire(lvalue, AtribuireRvalue::List(ListRvalue::Literal(Vec::new())));
-					return Ok((new_self, old_self.make_node(instruction)));
-				} else {
-					return Err(new_self.offset.make_err(ParserErrorKind::ExpectedEndOfBlocklessInstruction));
+			{
+				if let Ok((new_self, _)) = new_self.expect_str(",") {
+					let span = start_offset.span(&new_self.offset);
+					let new_self = new_self.skip_spaces();
+					if new_self.expect_str(";").is_ok() || new_self.expect_end().is_ok() {
+						let rvalue = ListRvalue::Literal(Vec::new());
+						let instruction = Instructiune::Atribuire(lvalue, AtribuireRvalue::List(span.node(rvalue)));
+						return Ok((new_self, old_self.make_node(instruction)));
+					} else {
+						return Err(new_self.offset.make_err(ParserErrorKind::ExpectedEndOfBlocklessInstruction));
+					}
 				}
 			}
 
 			let (new_self, operand) = new_self.parse_operand()?;
 			if let Ok((mut new_self, _)) = new_self.skip_spaces().expect_str(",") {
 				let mut list = Vec::new();
-				list.push(convert_node(Operand::into_float, operand)?.into_inner()); // TODO: Type check
+				list.push(operand.into_float()?);
 
 				loop {
 					let result = new_self.parse_assignment_list_element()?;
@@ -260,10 +269,10 @@ impl<'src> LineCursor<'src> {
 				}
 
 				let rvalue = ListRvalue::Literal(list);
+				let span = start_offset.span(&self.offset);
 
-				(new_self, old_self.make_node(Instructiune::Atribuire(lvalue, AtribuireRvalue::List(rvalue))))
+				(new_self, old_self.make_node(Instructiune::Atribuire(lvalue, AtribuireRvalue::List(span.node(rvalue)))))
 			} else {
-				let Node(span, operand) = operand;
 				let instruction = match operand {
 					expression::Operand::Ident(value) => {
 						Instructiune::Atribuire(lvalue, AtribuireRvalue::Unknown(value))
@@ -271,7 +280,7 @@ impl<'src> LineCursor<'src> {
 					expression::Operand::FloatRvalue(value) => {
 						Instructiune::Atribuire(lvalue, AtribuireRvalue::Float(value))
 					}
-					_ => return Err(span.0.make_err(ParserErrorKind::ExpectedValueType(make_bitflags!(ValueType::{Float | List})))),
+					operand => return Err(operand.span().0.make_err(ParserErrorKind::ExpectedValueType(make_bitflags!(ValueType::{Float | List})))),
 				};
 				
 				(new_self, old_self.make_node(instruction))
@@ -280,7 +289,7 @@ impl<'src> LineCursor<'src> {
 	}
 	
 	fn parse_second_step_pentru(self, old_self: Self) -> ParserResult<InstructiuneNode<'src>> {
-		let (new_self, lvalue) = self.skip_spaces().parse_ident()?;
+		let (new_self, ident) = self.skip_spaces().parse_ident()?;
 		let (new_self, _) = new_self.skip_spaces().expect_str("<-")?;
 		let (new_self, start) = new_self.skip_spaces().parse_float_rvalue()?;
 		
@@ -296,7 +305,7 @@ impl<'src> LineCursor<'src> {
 		let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("execută")?;
 		new_self.skip_spaces().expect_end()?;
 		
-		Ok(old_self.make_node(Instructiune::PentruExecuta(lvalue, start, end, increment, Vec::new())))
+		Ok(old_self.make_node(Instructiune::PentruExecuta(ident, start, end, increment, Vec::new())))
 	}
 
 	/// Checks if the rest of the statement looks like an assignment (or a swap),

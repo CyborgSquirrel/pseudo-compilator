@@ -1,16 +1,34 @@
 use inkwell::{values::{FloatValue, PointerValue, IntValue, AnyValue}, FloatPredicate, IntPredicate};
 
-use crate::{ast::{FloatRvalue, FloatUnop, FloatBinop, BoolRvalue, BoolFloatBinop, BoolBoolBinop, ListLvalue, ListRvalue}, Compiler, EPSILON};
+use crate::{ast::{FloatRvalue, FloatUnop, FloatBinop, BoolRvalue, BoolFloatBinop, BoolBoolBinop, ListLvalue, ListRvalue, ListRvalueNode, BoolRvalueNode, FloatRvalueNode, UnknownRvalueNode, UnknownRvalue, BoolUnop}, Compiler, EPSILON, source::Node};
 
-use super::{Compile, error::CompilerError, lvalue::CompileLvalue};
+use super::{Compile, error::CompilerError, lvalue::CompileLvalue, variable::Variable};
 
-impl<'src, 'ctx> Compile<'src, 'ctx> for FloatRvalue<'src> {
+impl<'src, 'ctx> Compile<'src, 'ctx> for UnknownRvalueNode<'src> {
+	type Output = Node<Variable<'ctx>>;
+
+	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
+    Ok(
+    	match self.inner() {
+    		UnknownRvalue::Ident(ident) => compiler.variable(ident)?,
+    		UnknownRvalue::Identity(value) => value.compile(compiler)?,
+    	}
+    )
+  }
+}
+
+impl<'src, 'ctx> Compile<'src, 'ctx> for FloatRvalueNode<'src> {
 	type Output = FloatValue<'ctx>;
 
 	/// Returns the inner float.
 	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
 		Ok(
-			match self {
+			match self.inner() {
+				FloatRvalue::Lvalue(x) => x.compile_load(compiler)?,
+				FloatRvalue::Unknown(x) => {
+					let x = x.compile(compiler)?;
+					x.build_set_check(compiler)?.build_load_float(compiler)?
+				}
 				FloatRvalue::Literal(x) => compiler.context.f64_type().const_float(*x as f64),
 				FloatRvalue::ListLength(list) => {
 					let list = list.compile(compiler)?;
@@ -30,7 +48,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for FloatRvalue<'src> {
 				FloatRvalue::Unop(unop, x) => {
 					let x = x.compile(compiler)?;
 					match unop {
-						FloatUnop::Ident => x,
+						FloatUnop::Identity => x,
 						FloatUnop::Neg => compiler.builder.build_float_neg(x, "tmp_neg")?,
 						FloatUnop::IntegralPart => {
 							let trunc_int = compiler.builder.build_float_to_signed_int(
@@ -58,17 +76,19 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for FloatRvalue<'src> {
 						FloatBinop::Rem => compiler.builder.build_float_rem(x, y, "tmp_rem")?,
 					}
 				}
-				FloatRvalue::Lvalue(x) => x.compile_load(compiler)?,
 			}
 		)
   }
 }
 
-impl<'src, 'ctx> Compile<'src, 'ctx> for BoolRvalue<'src> {
+impl<'src, 'ctx> Compile<'src, 'ctx> for BoolRvalueNode<'src> {
 	type Output = IntValue<'ctx>;
 	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
 		Ok(
-			match self {
+			match self.inner() {
+				BoolRvalue::BoolUnop(op, x) => match op {
+					BoolUnop::Identity => x.compile(compiler)?,
+				}
 				BoolRvalue::BoolFloatBinop(op, x, y) => {
 					let x = x.compile(compiler)?;
 					let y = y.compile(compiler)?;
@@ -146,12 +166,22 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for BoolRvalue<'src> {
   }
 }
 
-impl<'src, 'ctx> Compile<'src, 'ctx> for ListRvalue<'src> {
+impl<'src, 'ctx> Compile<'src, 'ctx> for ListRvalueNode<'src> {
 	type Output = PointerValue<'ctx>;
 
 	/// Returns the inner list.
 	fn compile(&self, compiler: &mut Compiler<'src, 'ctx>) -> Result<Self::Output, CompilerError> {
-		Ok(match self {
+		Ok(match self.inner() {
+  		ListRvalue::Lvalue(x) => match x {
+  			ListLvalue::Variable(ident) => {
+  				let x = compiler.variable(ident)?;
+  				x.build_set_check(compiler)?.build_load_list(compiler)?
+  			}
+  		}
+  		ListRvalue::Unknown(x) => {
+				let x = x.compile(compiler)?;
+				x.build_set_check(compiler)?.build_load_list(compiler)?
+  		}
   		ListRvalue::Literal(x) => {
   			// create array with values
   			let array_type = compiler.context.f64_type().array_type(x.len() as u32);
@@ -183,13 +213,6 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for ListRvalue<'src> {
 				let inner = call.as_any_value_enum().into_pointer_value();
 
 				inner
-  		}
-
-  		ListRvalue::Lvalue(x) => match x {
-  			ListLvalue::Variable(ident) => {
-  				let x = compiler.variable(ident)?;
-  				x.build_set_check(compiler)?.build_load_list(compiler)?
-  			}
   		}
 		})
   }

@@ -110,14 +110,14 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 			// for RepetaPanaCand. We're excluding RepetaPanaCand, because its location
 			// points to the "pana cand <condition>" part, which shows up after all its
 			// instructions.
-			match &instruction.inner {
+			match instruction.inner() {
 				Instructiune::RepetaPanaCand(_, _) => { },
 				_ => {
-					compiler.builder.set_current_debug_location(compiler.get_debug_location(&instruction.location));
+					compiler.builder.set_current_debug_location(compiler.get_debug_location(&instruction.span().0));
 				}
 			}
 			
-			match &instruction.inner {
+			match &instruction.inner() {
 				Instructiune::Scrie(params) => {
 					let mut args = Vec::new();
 
@@ -305,7 +305,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 					compiler.builder.position_at_end(repeta_block);
 					repeta.compile(compiler)?;
 
-					compiler.builder.set_current_debug_location(compiler.get_debug_location(&instruction.location));
+					compiler.builder.set_current_debug_location(compiler.get_debug_location(&instruction.span().0));
 					let conditie = conditie.compile(compiler)?;
 					compiler.builder.build_conditional_branch(
 						conditie,

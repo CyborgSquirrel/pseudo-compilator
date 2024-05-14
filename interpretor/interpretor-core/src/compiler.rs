@@ -7,7 +7,7 @@ use interpretor_sys::VariableKind;
 
 use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, basic_block::BasicBlock, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}, FloatPredicate};
 
-use crate::{ast::{Ident, InstructiuneNode, Location}, parse};
+use crate::{ast::{Ident, InstructiuneNode}, parse, source::Offset};
 
 use self::{other::External, error::{VerificationError, CompilerResult}, variable::Variable};
 
@@ -208,7 +208,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			let program = parse::parse(code)?;
 			dbg!(&program);
 			{
-				let location = Location::new(0, 0);
+				let location = Offset::new(0, 0);
 				compiler.variables_builder.set_current_debug_location(compiler.get_debug_location(&location));
 			}
 			compiler.compile_parsed(&program)?;
@@ -239,7 +239,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 }
 
 impl<'src, 'ctx> Compiler<'src, 'ctx> {
-	fn get_debug_location(&self, location: &Location) -> inkwell::debug_info::DILocation<'ctx> {
+	fn get_debug_location(&self, location: &Offset) -> inkwell::debug_info::DILocation<'ctx> {
 		let debug_location = self.debug_info_builder.create_debug_location(
 			self.context,
 			location.line(),
@@ -285,7 +285,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 					value,
 					Some(debug_variable),
 					None,
-					self.get_debug_location(&Location::new(0, 0)),
+					self.get_debug_location(&Offset::new(0, 0)),
 					self.variables_builder.get_insert_block().unwrap(),
 				);
 

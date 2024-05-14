@@ -11,7 +11,7 @@ pub enum CompilerError {
 	VerificationError(VerificationError),
 	LLVMError(inkwell::support::LLVMString),
 	ClangError(ClangError),
-	ParserError(parse::ParsingError),
+	ParserError(parse::ParserError),
 }
 
 impl From<BuilderError> for CompilerError {
@@ -63,8 +63,8 @@ impl From<ClangError> for CompilerError {
   }
 }
 
-impl From<parse::ParsingError> for CompilerError {
-	fn from(err: parse::ParsingError) -> Self {
+impl From<parse::ParserError> for CompilerError {
+	fn from(err: parse::ParserError) -> Self {
 		CompilerError::ParserError(err)
   }
 }

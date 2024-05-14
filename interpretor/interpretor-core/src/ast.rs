@@ -1,38 +1,4 @@
-use crate::EPSILON;
-
-
-#[derive(Debug)]
-pub struct Location {
-	line: u32,
-	column: u32,
-}
-
-impl Location {
-  pub fn new(line: u32, column: u32) -> Self {
-  	Self {
-  		line,
-  		column,
-  	}
-  }
-	pub fn line(&self) -> u32 { self.line }
-	pub fn column(&self) -> u32 { self.column }
-}
-
-#[derive(Debug)]
-pub struct Node<T> {
-	pub location: Location,
-	pub inner: T,
-}
-
-impl<T> Node<T> {
-	pub fn inner_mut(&mut self) -> &mut T {
-		&mut self.inner
-	}
-
-	pub fn inner(&self) -> &T {
-		&self.inner
-	}
-}
+use crate::{EPSILON, source::Node};
 
 pub type InstructiuneNode<'src> = Node<Instructiune<'src>>;
 

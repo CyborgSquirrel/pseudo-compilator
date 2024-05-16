@@ -3,8 +3,9 @@ import './App.css';
 import CodeMirror, { Decoration, DecorationSet, EditorView, GutterMarker, ReactCodeMirrorRef, StateEffect, StateField, gutter } from '@uiw/react-codemirror';
 import { indentUnit } from '@codemirror/language'
 import axios from 'axios';
-import { BsPlayFill, BsFillStopFill } from "react-icons/bs";
 import CommandLine from './CommandLine';
+import { PlayArrow, QuestionMark, Settings, Stop } from '@mui/icons-material';
+import SettingsModal from './SettingsModal';
 
 const endpoint = "localhost:8000";
 
@@ -42,6 +43,11 @@ const lineErrorField = StateField.define({
   },
   provide: (f) => EditorView.decorations.from(f),
 });
+
+const iconStyle = {
+  width: "50px",
+  height: "50px",
+};
 
 function App() {
   const instance = React.useMemo(() => {
@@ -114,12 +120,31 @@ function App() {
     output.scrollTo(0, output.scrollHeight);
   }, [valueOutput]);
 
+  const [openSettings, setOpenSettings] = React.useState(false);
+
+  const [compileLists, setCompileLists] = React.useState(() => {
+    const valueRaw = localStorage.getItem("compileLists");
+    if (valueRaw === null) return false;
+    const value: boolean = JSON.parse(valueRaw);
+    return value;
+  });
+  React.useEffect(() => {
+    localStorage.setItem("compileLists", JSON.stringify(compileLists));
+  }, [compileLists])
+
   return (
     <div
       style={{
         height: "100vh",
       }}
     >
+
+    <SettingsModal
+      open={openSettings}
+      setOpen={setOpenSettings}
+      compileLists={compileLists}
+      setCompileLists={setCompileLists}
+    />
 
     <div
       style={{
@@ -135,13 +160,16 @@ function App() {
           backgroundColor: "#f5f5f5",
         }}
       >
-        <BsPlayFill
+        <PlayArrow
           onClick={async () => {
             setValueOutput("");
             setJobId(null);
             setError(null);
 
-            const response = await instance.post("/job", {code: valueCode});
+            const response = await instance.post("/job", {
+              code: valueCode,
+              language_enable_lists: compileLists,
+            });
             const data = response.data;
 
             switch (data.message.type) {
@@ -155,12 +183,9 @@ function App() {
               }
             }
           }}
-          style={{
-            width: "50px",
-            height: "50px",
-          }}
+          style={iconStyle}
         />
-        <BsFillStopFill
+        <Stop
           onClick={async () => {
             if (socket === null) return;
 
@@ -170,11 +195,55 @@ function App() {
               }
             }));
           }}
+          style={iconStyle}
+        />
+        {/* NOTE: Have to wrap some icons in a <div>, because their size doesn't
+        match up with the other icons. I use the <div> to shrink them, and make
+        sure to center them inside the <div>. */}
+        <div
+          onClick={() => {
+            setOpenSettings(true);
+          }}
           style={{
-            width: "50px",
-            height: "50px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            ...iconStyle
+          }}
+        >
+          <Settings
+            style={{
+              width: "80%",
+              height: "80%",
+            }}
+          />
+        </div>
+
+        {/* Put help button at the bottom, to reduce clutter. */}
+        <div
+          style={{
+            flexGrow: 1,
           }}
         />
+
+        <div
+          onClick={() => {
+            console.log("hello world!");
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            ...iconStyle
+          }}
+        >
+          <QuestionMark
+            style={{
+              width: "80%",
+              height: "80%",
+            }}
+          />
+        </div>
       </div>
       <div
         style={{

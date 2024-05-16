@@ -38,6 +38,17 @@
             pkgs.llvmPackages_17.libcxxClang
 
             pkgs.gdb
+
+            (pkgs.python311.withPackages
+              (pythonPkgs: [
+                pythonPkgs.starlette
+                pythonPkgs.pydantic
+                pythonPkgs.uvicorn
+                pythonPkgs.websockets
+
+                pythonPkgs.polars
+              ])
+            )
           ];
           LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
         };

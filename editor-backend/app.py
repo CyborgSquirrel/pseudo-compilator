@@ -7,6 +7,7 @@ import logging
 import os
 import pathlib
 import shutil
+import subprocess
 import typing
 
 import pydantic
@@ -22,7 +23,16 @@ from starlette.websockets import WebSocket
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=os.environ.get("LOG_LEVEL"))
 
-COMPILER_PATH = pathlib.Path("/home/andrei/pseudo-interpretor/interpretor/target/debug/pseudo-interpretor")
+file = pathlib.Path(__file__)
+
+PSEUDO_WORKSPACE_PATH = file.parent.parent / "pseudo"
+COMPILER_PATH = PSEUDO_WORKSPACE_PATH / "target" / "debug" / "pseudo-cli"
+LIB_PATH = PSEUDO_WORKSPACE_PATH / "target" / "debug" / "libpseudo_sys.so"
+
+# make sure the compiler is built
+subprocess.run([
+    "cargo", "build",
+], cwd=str(PSEUDO_WORKSPACE_PATH))
 
 # state directory logic
 STATE_PATH = pathlib.Path("./state")
@@ -81,6 +91,7 @@ class JobResponse(pydantic.BaseModel):
 class JobEndpoint(HTTPEndpoint):
     class Post(pydantic.BaseModel):
         code: str
+        language_enable_lists: bool
 
     async def post(self, request: Request):
         body = await request.body()
@@ -95,8 +106,10 @@ class JobEndpoint(HTTPEndpoint):
         job.code_path.write_text(parsed_request.code)
         process = await asyncio.subprocess.create_subprocess_exec(
             str(COMPILER_PATH),
+            "--lib-path", str(LIB_PATH),
             "--executable",
             "--output", "json",
+            "--language-enable-lists", str(parsed_request.language_enable_lists).lower(),
             str(job.code_path),
             str(job.executable_path),
             stdout=asyncio.subprocess.PIPE,
@@ -108,7 +121,13 @@ class JobEndpoint(HTTPEndpoint):
             shutil.rmtree(job.state_path)
             del jobs[job.id]
 
-            return JSONResponse(dict(message=dict(type="failure", error=json.loads(stdout))))
+            try:
+                error = json.loads(stdout)
+            except json.JSONDecodeError:
+                error = None
+                logger.info("failed to decode compiler error %s", stdout)
+
+            return JSONResponse(dict(message=dict(type="failure", error=error)))
         job.status = "compiled"
         
         return JSONResponse(dict(message=dict(type="success", job_id=job_id)))

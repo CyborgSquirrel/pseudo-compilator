@@ -138,8 +138,6 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 		self.builder.build_return(Some(&self.context.i64_type().const_int(0, false)))?;
 		self.variables_builder.build_unconditional_branch(start_block)?;
 
-		self.module.print_to_stderr();
-
 		self.debug_info.builder.finalize();
 		self.module.verify().map_err(VerificationError::from)?;
 

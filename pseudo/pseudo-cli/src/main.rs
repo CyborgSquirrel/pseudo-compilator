@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::process::ExitCode;
 use std::{fs::File, io::Read};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, ValueEnum, ArgAction};
 use clap::builder::PossibleValue;
 use pseudo_core::LanguageSettings;
 
@@ -107,6 +107,18 @@ struct Args {
 		long, default_value_t = Output::Text,
 	)]
 	output: Output,
+
+	#[arg(
+		help = "Enable lists in pseudocode language",
+		long, action=ArgAction::Set, default_value_t = true,
+	)]
+	language_enable_lists: bool,
+
+	#[arg(
+		help = "Set the epsilon threshold value that will be used to perform comparisons between floating-point numbers",
+		long, default_value_t = LanguageSettings::DEFAULT_EPSILON,
+	)]
+	language_epsilon: f64,
 }
 
 #[derive(serde::Serialize)]
@@ -129,8 +141,8 @@ fn main() -> ExitCode {
 	let result = (|| {
 		let context = pseudo_core::Context::create();
 		let language_settings = LanguageSettings {
-			epsilon: 0.000001,
-			enable_list: true,
+			epsilon: args.language_epsilon,
+			enable_list: args.language_enable_lists,
 		};
 		let compiler = pseudo_core::Compiler::compile(
 			&language_settings,

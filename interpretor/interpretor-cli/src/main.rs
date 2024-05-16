@@ -75,6 +75,9 @@ struct Args {
 	destination_path: std::path::PathBuf,
 
 	#[arg(long)]
+	lib_path: Option<std::path::PathBuf>,
+
+	#[arg(long)]
 	object: bool,
 
 	#[arg(long, conflicts_with = "object")]
@@ -114,7 +117,10 @@ fn main() -> ExitCode {
 		if args.object {
 			compiler.write_object(args.destination_path, args.opt.into())?;
 		} else if args.executable {
-			compiler.write_executable(args.destination_path, args.opt.into())?;
+			let Some(lib_path) = args.lib_path else {
+				panic!("Need path to pseudocode lib to be able to create executable (pass with --lib-path).");
+			};
+			compiler.write_executable(lib_path, args.destination_path, args.opt.into())?;
 		} else if args.llvm_ir {
 			compiler.write_llvm_ir(args.destination_path)?;
 		} else {
@@ -125,8 +131,8 @@ fn main() -> ExitCode {
 
 	if let Err(interpretor_core::CompilerError::ParserError(parser_error)) = result {
 		let parser_error = ParserError {
-			line: parser_error.0,
-			column: parser_error.1,
+			line: parser_error.0.line() as usize,
+			column: parser_error.0.column() as usize,
 			message: parser_error.make_string(),
 		};
 		match args.output {

@@ -54,6 +54,7 @@ pub union VariableInner {
 }
 
 #[repr(i64)]
+#[derive(Clone, Copy)]
 pub enum VariableKind {
 	Null = 0,
 	Float = 1,

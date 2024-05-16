@@ -10,40 +10,17 @@ use super::{
 	expression::Expecting,
 };
 
-macro_rules! test_parser_err {
-	{ $function:ident, ($line:expr , $column:expr , $kind:expr $(,)?), $code:expr } => {
-		#[test]
-		fn $function() {
-			let code = indoc!{ $code };
-			print!("===\n{code}\n===\n");
-			let language_settings = LanguageSettings {
-				epsilon: LanguageSettings::DEFAULT_EPSILON,
-				enable_list: true,
-			};
-			let result = parse(&language_settings, code);
-			let err = result.unwrap_err();
-			assert_eq!(
-				($line, $column, $kind),
-				(err.0.line_one(), err.0.column(), err.1),
-			)
-		}
-	}
-}
-
 macro_rules! nop {
 	( $val:tt ) => { }
 }
 
-macro_rules! test_parser_err_no_list {
+macro_rules! test_parser_err {
 	{ $function:ident, ($line:expr , $column:expr , $($kind:expr $(,)?)?), $code:expr } => {
 		#[test]
 		fn $function() {
 			let code = indoc!{ $code };
 			print!("===\n{code}\n===\n");
-			let language_settings = LanguageSettings {
-				epsilon: LanguageSettings::DEFAULT_EPSILON,
-				enable_list: false,
-			};
+			let language_settings = language_settings!();
 			let result = parse(&language_settings, code);
 			let err = result.unwrap_err();
 			assert_eq!(
@@ -60,12 +37,18 @@ macro_rules! test_parser_ok {
 		fn $function() {
 			let code = indoc! { $code };
 			print!("===\n{code}\n===\n");
-			let language_settings = LanguageSettings {
-				epsilon: LanguageSettings::DEFAULT_EPSILON,
-				enable_list: true,
-			};
+			let language_settings = language_settings!();
 			let result = parse(&language_settings, code);
 			result.unwrap();
+		}
+	}
+}
+
+macro_rules! language_settings {
+	() => {
+		LanguageSettings {
+			epsilon: LanguageSettings::DEFAULT_EPSILON,
+			enable_list: true,
 		}
 	}
 }
@@ -372,7 +355,18 @@ test_parser_ok! {
 	"#
 }
 
-test_parser_err_no_list! {
+// tests where lists are disabled
+
+macro_rules! language_settings {
+	() => {
+		LanguageSettings {
+			epsilon: LanguageSettings::DEFAULT_EPSILON,
+			enable_list: false,
+		}
+	}
+}
+
+test_parser_err! {
 	no_list_parse_list_literal,
 	(
 		1, 6,
@@ -383,7 +377,7 @@ test_parser_err_no_list! {
 	"#
 }
 
-test_parser_err_no_list! {
+test_parser_err! {
 	no_list_parse_list_empty_literal,
 	(
 		1, 5,
@@ -393,7 +387,7 @@ test_parser_err_no_list! {
 	"#
 }
 
-test_parser_err_no_list! {
+test_parser_err! {
 	no_list_parse_list_lvalue,
 	(
 		1, 1,
@@ -403,7 +397,7 @@ test_parser_err_no_list! {
 	"#
 }
 
-test_parser_err_no_list! {
+test_parser_err! {
 	no_list_parse_list_rvalue,
 	(
 		1, 5,
@@ -413,7 +407,7 @@ test_parser_err_no_list! {
 	"#
 }
 
-test_parser_err_no_list! {
+test_parser_err! {
 	no_list_parse_list_length,
 	(
 		1, 14,

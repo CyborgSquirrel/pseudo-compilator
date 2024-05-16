@@ -25,8 +25,7 @@ class Test(unittest.TestCase):
 			src_path.write_text(source)
 
 			subprocess.run([
-				"cargo", "run", "-p", "pseudo-cli",
-				"--",
+				"cargo", "run", "-p", "pseudo-cli", "--",
 				"--lib-path", str(LIB_PATH),
 				"--executable",
 				str(src_path), str(exe_path),

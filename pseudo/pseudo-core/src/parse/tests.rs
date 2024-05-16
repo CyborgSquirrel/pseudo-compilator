@@ -343,6 +343,13 @@ test_parser_ok! {
 }
 
 test_parser_ok! {
+	parse_no_trailing_newline,
+	r#"
+		pentru i<-1,10 executa
+			scrie i"#
+}
+
+test_parser_ok! {
 	parse_cat_ident,
 	r#"
 		cat <- 42

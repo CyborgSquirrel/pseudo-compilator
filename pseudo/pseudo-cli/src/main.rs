@@ -156,7 +156,7 @@ fn main() -> ExitCode {
 
 	if let Err(pseudo_core::CompilerError::ParserError(parser_error)) = result {
 		let parser_error = ParserError {
-			line: parser_error.0.line() as usize,
+			line: parser_error.0.line_one() as usize,
 			column: parser_error.0.column() as usize,
 			message: parser_error.make_string(),
 		};

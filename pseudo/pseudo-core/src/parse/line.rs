@@ -48,12 +48,13 @@ impl<'src> LineCursor<'src> {
 	fn expect_str(mut self, expected: &'static str) -> ParserIntermediateResult<'src, ()> {
 		Ok({
 			let offset = self.offset;
-			for (grapheme, expected_grapheme) in izip!(
-				self.code().graphemes(true),
-				expected.graphemes(true),
-			) {
+			let mut code_iter = self.code().graphemes(true);
+			for expected_grapheme in expected.graphemes(true) {
+				let Some(grapheme) = code_iter.next() else {
+					return Err(offset.make_err(ParserErrorKind::ExpectedStr(expected)));
+				};
 				if grapheme != expected_grapheme {
-					return Err(offset.make_err(ParserErrorKind::ExpectedStr(expected)))
+					return Err(offset.make_err(ParserErrorKind::ExpectedStr(expected)));
 				}
 				self.offset.add_grapheme(grapheme);
 			}
@@ -64,10 +65,12 @@ impl<'src> LineCursor<'src> {
 	pub fn expect_str_optional_diacritics(mut self, expected: &'static str) -> ParserIntermediateResult<'src, ()> {
 		Ok({
 			let offset = self.offset;
-			for (grapheme, expected_grapheme) in izip!(
-				self.code().graphemes(true),
-				expected.graphemes(true),
-			) {
+			let mut code_iter = self.code().graphemes(true);
+			for expected_grapheme in expected.graphemes(true) {
+				let Some(grapheme) = code_iter.next() else {
+					return Err(offset.make_err(ParserErrorKind::ExpectedStrOptionalDiacritics(expected)))
+				};
+
 				let matches = match (grapheme, expected_grapheme) {
 					("a", "ă")|("A", "Ă")|
 					("a", "â")|("A", "Â")|

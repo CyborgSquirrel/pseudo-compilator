@@ -5,25 +5,25 @@ use clap::{Parser, ValueEnum};
 use clap::builder::PossibleValue;
 
 #[derive(Debug, Clone)]
-pub struct OptimizationLevel(interpretor_core::OptimizationLevel);
+pub struct OptimizationLevel(pseudo_core::OptimizationLevel);
 
-impl From<interpretor_core::OptimizationLevel> for OptimizationLevel {
-	fn from(value: interpretor_core::OptimizationLevel) -> Self {
+impl From<pseudo_core::OptimizationLevel> for OptimizationLevel {
+	fn from(value: pseudo_core::OptimizationLevel) -> Self {
 		OptimizationLevel(value)
   }
 }
 
-impl Into<interpretor_core::OptimizationLevel> for OptimizationLevel {
-	fn into(self) -> interpretor_core::OptimizationLevel {
+impl Into<pseudo_core::OptimizationLevel> for OptimizationLevel {
+	fn into(self) -> pseudo_core::OptimizationLevel {
     self.0
   }
 }
 
 static OPTIMIZATION_LEVEL_VALUE_VARIANTS: &[OptimizationLevel] = &[
-  OptimizationLevel(interpretor_core::OptimizationLevel::None),
-  OptimizationLevel(interpretor_core::OptimizationLevel::Less),
-  OptimizationLevel(interpretor_core::OptimizationLevel::Default),
-  OptimizationLevel(interpretor_core::OptimizationLevel::Aggressive),
+  OptimizationLevel(pseudo_core::OptimizationLevel::None),
+  OptimizationLevel(pseudo_core::OptimizationLevel::Less),
+  OptimizationLevel(pseudo_core::OptimizationLevel::Default),
+  OptimizationLevel(pseudo_core::OptimizationLevel::Aggressive),
 ];
 
 impl clap::ValueEnum for OptimizationLevel {
@@ -32,10 +32,10 @@ impl clap::ValueEnum for OptimizationLevel {
   }
   fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
     match self.0 {
-	    interpretor_core::OptimizationLevel::None => Some(PossibleValue::new("none")),
-	    interpretor_core::OptimizationLevel::Less => Some(PossibleValue::new("less")),
-	    interpretor_core::OptimizationLevel::Default => Some(PossibleValue::new("default")),
-	    interpretor_core::OptimizationLevel::Aggressive => Some(PossibleValue::new("aggressive")),
+	    pseudo_core::OptimizationLevel::None => Some(PossibleValue::new("none")),
+	    pseudo_core::OptimizationLevel::Less => Some(PossibleValue::new("less")),
+	    pseudo_core::OptimizationLevel::Default => Some(PossibleValue::new("default")),
+	    pseudo_core::OptimizationLevel::Aggressive => Some(PossibleValue::new("aggressive")),
     }
   }
 }
@@ -43,10 +43,10 @@ impl clap::ValueEnum for OptimizationLevel {
 impl Display for OptimizationLevel {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self.0 {
-	    interpretor_core::OptimizationLevel::None => f.write_str("none")?,
-	    interpretor_core::OptimizationLevel::Less => f.write_str("less")?,
-	    interpretor_core::OptimizationLevel::Default => f.write_str("default")?,
-	    interpretor_core::OptimizationLevel::Aggressive => f.write_str("aggressive")?,
+	    pseudo_core::OptimizationLevel::None => f.write_str("none")?,
+	    pseudo_core::OptimizationLevel::Less => f.write_str("less")?,
+	    pseudo_core::OptimizationLevel::Default => f.write_str("default")?,
+	    pseudo_core::OptimizationLevel::Aggressive => f.write_str("aggressive")?,
     }
 		Ok(())
   }
@@ -86,7 +86,7 @@ struct Args {
 	#[arg(long, conflicts_with = "object", conflicts_with = "executable")]
 	llvm_ir: bool,
 
-	#[arg(long, default_value_t = OptimizationLevel(interpretor_core::OptimizationLevel::Default))]
+	#[arg(long, default_value_t = OptimizationLevel(pseudo_core::OptimizationLevel::Default))]
 	opt: OptimizationLevel,
 
 	#[arg(long, default_value_t = Output::Text)]
@@ -111,8 +111,8 @@ fn main() -> ExitCode {
 	program_file.read_to_string(&mut code).unwrap();
 
 	let result = (|| {
-		let context = interpretor_core::Context::create();
-		let compiler = interpretor_core::Compiler::compile(&context, &code, &args.source_path)?;
+		let context = pseudo_core::Context::create();
+		let compiler = pseudo_core::Compiler::compile(&context, &code, &args.source_path)?;
 
 		if args.object {
 			compiler.write_object(args.destination_path, args.opt.into())?;
@@ -129,7 +129,7 @@ fn main() -> ExitCode {
 		Ok(())
 	})();
 
-	if let Err(interpretor_core::CompilerError::ParserError(parser_error)) = result {
+	if let Err(pseudo_core::CompilerError::ParserError(parser_error)) = result {
 		let parser_error = ParserError {
 			line: parser_error.0.line() as usize,
 			column: parser_error.0.column() as usize,

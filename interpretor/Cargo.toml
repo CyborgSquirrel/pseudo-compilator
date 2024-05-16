@@ -1,11 +1,11 @@
 [workspace]
 members = [
-  "interpretor-core",
-  "interpretor-cli",
-  "interpretor-sys",
-  # "interpretor-wasm",
+  "pseudo-core",
+  "pseudo-cli",
+  "pseudo-sys",
+  # "pseudo-wasm",
 ]
 
 [workspace.dependencies]
-interpretor-core = { path = "./interpretor-core" }
-interpretor-sys = { path = "./interpretor-sys" }
+pseudo-core = { path = "./pseudo-core" }
+pseudo-sys = { path = "./pseudo-sys" }

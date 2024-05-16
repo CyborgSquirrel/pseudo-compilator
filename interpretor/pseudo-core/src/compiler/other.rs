@@ -1,6 +1,6 @@
 use inkwell::{values::FunctionValue, module::Module, context::Context, AddressSpace, llvm_sys::LLVMCallConv, types::StructType};
 
-pub use interpretor_sys::VariableKind;
+pub use pseudo_sys::VariableKind;
 
 #[derive(Debug)]
 pub struct External<'ctx> {

@@ -3,7 +3,7 @@ trace::init_depth_var!();
 pub use crate::compiler::error::CompilerError;
 use std::{collections::HashMap, path::Path};
 
-use interpretor_sys::VariableKind;
+use pseudo_sys::VariableKind;
 
 use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}, FloatPredicate};
 

@@ -1,5 +1,5 @@
 use inkwell::{values::{PointerValue, IntValue, FloatValue}, AddressSpace};
-use interpretor_sys::VariableKind;
+use pseudo_sys::VariableKind;
 
 use crate::source::Span;
 

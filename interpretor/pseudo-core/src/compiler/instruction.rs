@@ -1,6 +1,6 @@
 pub use crate::compiler::error::CompilerError;
 
-use interpretor_sys::VariableKind;
+use pseudo_sys::VariableKind;
 use itertools::{Itertools, izip};
 
 use inkwell::{values::{PointerValue, AnyValue}, FloatPredicate};

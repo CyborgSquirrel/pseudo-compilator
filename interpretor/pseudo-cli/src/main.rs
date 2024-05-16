@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use std::{fs::File, io::Read};
 use clap::{Parser, ValueEnum};
 use clap::builder::PossibleValue;
+use pseudo_core::LanguageSettings;
 
 #[derive(Debug, Clone)]
 pub struct OptimizationLevel(pseudo_core::OptimizationLevel);
@@ -74,22 +75,37 @@ struct Args {
 	#[arg(name = "DESTINATION")]
 	destination_path: std::path::PathBuf,
 
-	#[arg(long)]
+	#[arg(
+		help = "Path to libpseudo_sys.so shared library, required to generate executable file",
+		long,
+	)]
 	lib_path: Option<std::path::PathBuf>,
 
-	#[arg(long)]
+	#[arg(
+		help = "Output will be object file",
+		long,
+	)]
 	object: bool,
 
-	#[arg(long, conflicts_with = "object")]
+	#[arg(
+		help = "Output will be executable file",
+		long, conflicts_with = "object",
+	)]
 	executable: bool,
 
-	#[arg(long, conflicts_with = "object", conflicts_with = "executable")]
+	#[arg(
+		help = "Output will be generated LLVM IR",
+		long, conflicts_with = "object", conflicts_with = "executable",
+	)]
 	llvm_ir: bool,
 
 	#[arg(long, default_value_t = OptimizationLevel(pseudo_core::OptimizationLevel::Default))]
 	opt: OptimizationLevel,
 
-	#[arg(long, default_value_t = Output::Text)]
+	#[arg(
+		help = "Output format of compiler error messages",
+		long, default_value_t = Output::Text,
+	)]
 	output: Output,
 }
 
@@ -112,7 +128,14 @@ fn main() -> ExitCode {
 
 	let result = (|| {
 		let context = pseudo_core::Context::create();
-		let compiler = pseudo_core::Compiler::compile(&context, &code, &args.source_path)?;
+		let compiler = pseudo_core::Compiler::compile(
+			LanguageSettings {
+				epsilon: 0.000001,
+			},
+			&context,
+			&code,
+			&args.source_path,
+		)?;
 
 		if args.object {
 			compiler.write_object(args.destination_path, args.opt.into())?;

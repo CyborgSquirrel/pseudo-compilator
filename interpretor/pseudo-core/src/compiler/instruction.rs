@@ -5,7 +5,7 @@ use itertools::{Itertools, izip};
 
 use inkwell::{values::{PointerValue, AnyValue}, FloatPredicate};
 
-use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue}, Compiler, EPSILON};
+use crate::{ast::{Instructiune, ScrieParam, InstructiuneNode, AtribuireRvalue}, Compiler};
 
 use super::{Compile, lvalue::CompileLvalue};
 
@@ -384,13 +384,13 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 								compiler.builder.build_float_compare(
 									FloatPredicate::OLT,
 									delta,
-									compiler.context.f64_type().const_float(EPSILON.into()),
+									compiler.context.f64_type().const_float(compiler.language_settings.epsilon.into()),
 									"",
 								)?,
 								compiler.builder.build_float_compare(
 									FloatPredicate::OGT,
 									delta,
-									compiler.context.f64_type().const_float((-EPSILON).into()),
+									compiler.context.f64_type().const_float((-compiler.language_settings.epsilon).into()),
 									"",
 								)?,
 								"egal_contor",

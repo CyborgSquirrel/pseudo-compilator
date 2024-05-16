@@ -1,4 +1,4 @@
-use crate::{EPSILON, source::Node};
+use crate::source::Node;
 
 pub type InstructiuneNode<'src> = Node<Instructiune<'src>>;
 
@@ -176,17 +176,6 @@ pub enum BoolFloatBinop {
 	Divides,
 }
 impl BoolFloatBinop {
-	pub fn evaluate(&self, x: f32, y: f32) -> bool {
-		match self {
-			BoolFloatBinop::Eq      => (x - y).abs() <= EPSILON,
-			BoolFloatBinop::Neq     => (x - y).abs() > EPSILON,
-			BoolFloatBinop::Lt      => x < y,
-			BoolFloatBinop::Gt      => x > y,
-			BoolFloatBinop::Lte     => x <= y,
-			BoolFloatBinop::Gte     => x >= y,
-			BoolFloatBinop::Divides => (y as i32) % (x as i32) == 0,
-		}
-	}
 	pub fn get_str(&self) -> &'static str {
 		match self {
 			BoolFloatBinop::Eq      => "=",

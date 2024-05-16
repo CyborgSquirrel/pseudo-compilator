@@ -1,6 +1,6 @@
 use inkwell::{values::{FloatValue, PointerValue, IntValue, AnyValue}, FloatPredicate, IntPredicate};
 
-use crate::{ast::{FloatRvalue, FloatUnop, FloatBinop, BoolRvalue, BoolFloatBinop, BoolBoolBinop, ListLvalue, ListRvalue, ListRvalueNode, BoolRvalueNode, FloatRvalueNode, UnknownRvalueNode, UnknownRvalue, BoolUnop}, Compiler, EPSILON, source::Node};
+use crate::{ast::{FloatRvalue, FloatUnop, FloatBinop, BoolRvalue, BoolFloatBinop, BoolBoolBinop, ListLvalue, ListRvalue, ListRvalueNode, BoolRvalueNode, FloatRvalueNode, UnknownRvalueNode, UnknownRvalue, BoolUnop}, Compiler, source::Node};
 
 use super::{Compile, error::CompilerError, lvalue::CompileLvalue, variable::Variable};
 
@@ -99,13 +99,13 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for BoolRvalueNode<'src> {
 								compiler.builder.build_float_compare(
 									FloatPredicate::OLT,
 									delta,
-									compiler.context.f64_type().const_float(EPSILON.into()),
+									compiler.context.f64_type().const_float(compiler.language_settings.epsilon.into()),
 									"",
 								)?,
 								compiler.builder.build_float_compare(
 									FloatPredicate::OGT,
 									delta,
-									compiler.context.f64_type().const_float((-EPSILON).into()),
+									compiler.context.f64_type().const_float((-compiler.language_settings.epsilon).into()),
 									"",
 								)?,
 								"tmp_eq",
@@ -117,13 +117,13 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for BoolRvalueNode<'src> {
 								compiler.builder.build_float_compare(
 									FloatPredicate::OGE,
 									delta,
-									compiler.context.f64_type().const_float(EPSILON.into()),
+									compiler.context.f64_type().const_float(compiler.language_settings.epsilon.into()),
 									"",
 								)?,
 								compiler.builder.build_float_compare(
 									FloatPredicate::OLE,
 									delta,
-									compiler.context.f64_type().const_float((-EPSILON).into()),
+									compiler.context.f64_type().const_float((-compiler.language_settings.epsilon).into()),
 									"",
 								)?,
 								"tmp_neq",

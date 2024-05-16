@@ -7,7 +7,10 @@ pub use compiler::{Compiler, CompilerError};
 pub use inkwell::{context::Context, OptimizationLevel};
 use itertools::Itertools;
 
-pub const EPSILON: f32 = 0.000001;
+#[derive(Debug)]
+pub struct LanguageSettings {
+	pub epsilon: f64,
+}
 
 impl parse::ParserError {
 	pub fn make_string(&self) -> String {

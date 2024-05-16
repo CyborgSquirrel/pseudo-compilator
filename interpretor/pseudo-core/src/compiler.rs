@@ -5,9 +5,9 @@ use std::{collections::HashMap, path::Path};
 
 use pseudo_sys::VariableKind;
 
-use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, debug_info::{DebugInfoBuilder, DICompileUnit, AsDIScope, DISubprogram, DIType}, FloatPredicate};
+use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, debug_info::AsDIScope, FloatPredicate};
 
-use crate::{ast::{InstructiuneNode, IdentNode}, parse, source::{Offset, Node, Span}};
+use crate::{ast::{InstructiuneNode, IdentNode}, parse, source::{Offset, Node, Span}, LanguageSettings};
 
 use self::{other::External, error::{VerificationError, CompilerResult}, variable::Variable, debug::DebugInfo};
 
@@ -28,6 +28,8 @@ trait Compile<'src, 'ctx> {
 
 #[derive(Debug)]
 pub struct Compiler<'src, 'ctx> {
+	language_settings: LanguageSettings,
+	
 	context: &'ctx Context,
 	module: Module<'ctx>,
 
@@ -51,6 +53,7 @@ pub struct Compiler<'src, 'ctx> {
 
 impl<'src, 'ctx> Compiler<'src, 'ctx> {
 	pub fn compile<P: AsRef<Path>>(
+		language_settings: LanguageSettings,
 		context: &'ctx Context,
 		code: &'src str,
 		path: P,
@@ -90,6 +93,8 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			let fail_range_error_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: indicele %lf iese din intervalul [%lf; %lf).\n", "format")?.as_pointer_value();
 
 			let mut compiler = Self {
+				language_settings,
+
 				context,
 				module,
 

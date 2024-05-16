@@ -220,30 +220,32 @@ function App() {
         </div>
 
         {/* Put help button at the bottom, to reduce clutter. */}
-        <div
-          style={{
-            flexGrow: 1,
-          }}
-        />
-
-        <div
-          onClick={() => {
-            console.log("hello world!");
-          }}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            ...iconStyle
-          }}
-        >
-          <QuestionMark
+        {/*
+          <div
             style={{
-              width: "80%",
-              height: "80%",
+              flexGrow: 1,
             }}
           />
-        </div>
+
+          <div
+            onClick={() => {
+              console.log("hello world!");
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              ...iconStyle
+            }}
+          >
+            <QuestionMark
+              style={{
+                width: "80%",
+                height: "80%",
+              }}
+            />
+          </div>
+        */}
       </div>
       <div
         style={{

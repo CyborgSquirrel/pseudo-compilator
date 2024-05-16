@@ -128,10 +128,12 @@ fn main() -> ExitCode {
 
 	let result = (|| {
 		let context = pseudo_core::Context::create();
+		let language_settings = LanguageSettings {
+			epsilon: 0.000001,
+			enable_list: true,
+		};
 		let compiler = pseudo_core::Compiler::compile(
-			LanguageSettings {
-				epsilon: 0.000001,
-			},
+			&language_settings,
 			&context,
 			&code,
 			&args.source_path,

@@ -28,7 +28,7 @@ trait Compile<'src, 'ctx> {
 
 #[derive(Debug)]
 pub struct Compiler<'src, 'ctx> {
-	language_settings: LanguageSettings,
+	language_settings: &'src LanguageSettings,
 	
 	context: &'ctx Context,
 	module: Module<'ctx>,
@@ -53,7 +53,7 @@ pub struct Compiler<'src, 'ctx> {
 
 impl<'src, 'ctx> Compiler<'src, 'ctx> {
 	pub fn compile<P: AsRef<Path>>(
-		language_settings: LanguageSettings,
+		language_settings: &'src LanguageSettings,
 		context: &'ctx Context,
 		code: &'src str,
 		path: P,
@@ -115,8 +115,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 				fail_range_error_format_ptr,
 			};
 
-			let program = parse::parse(code)?;
-			dbg!(&program);
+			let program = parse::parse(&language_settings, code)?;
 			{
 				let location = Offset::new(0, 0);
 				compiler.variables_builder.set_current_debug_location(compiler.get_debug_location(&location));

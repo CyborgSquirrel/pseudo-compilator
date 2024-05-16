@@ -1,10 +1,15 @@
+use std::rc::Rc;
+
 use enumflags2::{bitflags, BitFlags};
 
-use crate::{ast::{Instructiune, InstructiuneNode}, parse::line::LineCursor, source::{Offset, Node}};
+use crate::{ast::{Instructiune, InstructiuneNode}, parse::line::LineCursor, source::{Offset, Node}, LanguageSettings};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub mod expression;
 pub mod line;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug)]
 pub enum GraphemeKind {
@@ -117,23 +122,28 @@ pub enum ParserErrorKind {
 
 #[derive(Debug, Clone, Copy)]
 struct Cursor<'src> {
+	language_settings: &'src LanguageSettings,
 	code: &'src str,
 	offset: Offset,
 }
 
-impl<'a> Cursor<'a> {
-	fn new(code: &'a str) -> Self {
+impl<'src> Cursor<'src> {
+	fn new(
+		language_settings: &'src LanguageSettings,
+		code: &'src str,
+	) -> Self {
 		Self {
+			language_settings,
 			code,
 			offset: Offset::zero(),
 		}
 	}
 
-	fn code(&self) -> &'a str {
+	fn code(&self) -> &'src str {
 		&self.code[self.offset.bytes() as usize..]
 	}
 
-	fn parse(mut self, instructions: &mut Vec<InstructiuneNode<'a>>, indent: usize) -> ParserIntermediateResult<'a> {
+	fn parse(mut self, instructions: &mut Vec<InstructiuneNode<'src>>, indent: usize) -> ParserIntermediateResult<'src> {
 		enum Expecting<'src> {
 			Anything,
 			PanaCand(Offset, Vec<InstructiuneNode<'src>>),
@@ -174,7 +184,7 @@ impl<'a> Cursor<'a> {
 
 			// Create line cursor with *current* offset.
 			let line_offset = self.offset;
-			let line_cursor = LineCursor::new(self.code, line_offset);
+			let line_cursor = LineCursor::new(self.language_settings, self.code, line_offset);
 
 			// Move offset to next line.
 			let mut is_empty = true;
@@ -283,341 +293,14 @@ impl<'a> Cursor<'a> {
 	}
 }
 
-pub fn parse<'a>(code: &'a str) -> ParserResult<Vec<InstructiuneNode<'a>>> {
+pub fn parse<'src>(
+	language_settings: &'src LanguageSettings,
+	code: &'src str,
+) -> ParserResult<Vec<InstructiuneNode<'src>>> {
 	let mut program = Vec::new();
-	let cursor = Cursor::new(&code);
+	let cursor = Cursor::new(
+		language_settings,
+		code,
+	);
 	cursor.parse(&mut program, 0).map(|_| program)
-}
-
-#[cfg(test)]
-mod tests {
-	use enumflags2::make_bitflags;
-	use indoc::indoc;
-	
-	macro_rules! test_parser_err {
-		{ $function:ident, ($line:expr , $column:expr , $kind:expr $(,)?), $code:expr } => {
-			#[test]
-			fn $function() {
-				let code = indoc!{ $code };
-				print!("===\n{code}\n===\n");
-				let err = parse(code).unwrap_err();
-				assert_eq!(
-					($line, $column, $kind),
-					(err.0.line_one(), err.0.column(), err.1),
-				)
-			}
-		}
-	}
-
-	macro_rules! test_parser_ok {
-		{ $function:ident, $code:expr } => {
-			#[test]
-			fn $function() {
-				parse(indoc! { $code }).unwrap();
-			}
-		}
-	}
-	
-	use crate::parse::ValueType;
-
-use super::{
-		parse, 
-		ParserErrorKind::*,
-		expression::Expecting,
-	};
-	
-	// expressions
-	test_parser_err! {
-		missing_operand_or_unop,
-		(
-			1, 15,
-			ExpectedSomethingElse(make_bitflags!(Expecting::{PrefixUnop | Rvalue})),
-		),
-		r#"scrie   4141+  "#
-	}
-	
-	test_parser_err! {
-		missing_operand,
-		(
-			1, 16,
-			(ExpectedSomethingElse(make_bitflags!(Expecting::{Rvalue}))),
-		),
-		r#"scrie   4141+-  "#
-	}
-	
-	test_parser_err! {
-		mismatched_parens,
-		(
-			1, 10,
-			MismatchedParens,
-		),
-		r#"scrie [1+2)"#
-	}
-	
-	test_parser_err! {
-		too_many_unops,
-		(
-			1, 7,
-			ExpectedSomethingElse(make_bitflags!(Expecting::{Rvalue})),
-		),
-		r#"scrie ++41+1"#
-	}
-	
-	test_parser_err! {
-		empty_parens,
-		(
-			1, 4,
-			ExpectedSomethingElse(make_bitflags!(Expecting::{PrefixUnop | Rvalue})),
-		),
-		r#"a<-()"#
-	}
-	
-	test_parser_err! {
-		unclosed_lparen,
-		(
-			1, 3,
-			UnclosedLParen,
-		),
-		r#"a<-(x+y"#
-	}
-	
-	test_parser_err! {
-		unclosed_rparen,
-		(
-			1, 6,
-			UnclosedRParen,
-		),
-		r#"a<-x+y)"#
-	}
-	
-	test_parser_err! {
-		invalid_float_unop_operands,
-		(
-			1, 6,
-			ExpectedValueType(make_bitflags!(ValueType::{Float})),
-		),
-		r#"
-			daca +(1=2 sau 3<5 si 4=4) atunci
-				scrie "ok"
-		"#
-	}
-	
-	test_parser_err! {
-		invalid_float_literal,
-		(
-			1, 3,
-			InvalidFloatLiteral,
-		),
-		r#"a<-41yeet41"#
-	}
-	
-	// other stuff
-	test_parser_err! {
-		invalid_indent,
-		(
-			2, 1,
-			InvalidIndent,
-		),
-		r#"
-			scrie "ok"
-				scrie "nope"
-		"#
-	}
-	
-	test_parser_err! {
-		altfel_without_daca,
-		(
-			3, 0,
-			AltfelWithoutDaca,
-		),
-		r#"
-			scrie 41
-			
-			altfel
-		"#
-	}
-	
-	test_parser_err! {
-		daca_already_has_altfel,
-		(
-			7, 0,
-			DacaAlreadyHasAltfel,
-		),
-		r#"
-			scrie 41
-			
-			daca 41=41 atunci
-				scrie "ok"
-			altfel
-				scrie "catastrofa"
-			altfel
-				scrie "wut"
-		"#
-	}
-	
-	test_parser_err! {
-		empty_block_daca,
-		(
-			1, 0,
-			EmptyBlock,
-		),
-		r#"
-			daca 40+1=41 atunci
-				
-			scrie "bun"
-		"#
-	}
-	
-	test_parser_err! {
-		empty_block_altfel,
-		(
-			3, 0,
-			EmptyBlock,
-		),
-		r#"
-			daca 40+1=41 atunci
-				scrie "bun"
-			altfel
-			scrie "ne-bun"
-		"#
-	}
-	
-	test_parser_err! {
-		empty_block_repeta_pana_cand,
-		(
-			7, 0,
-			EmptyBlock,
-		),
-		r#"
-			repeta
-				
-				
-				
-				
-				
-			pana cand 41=42-1
-		"#
-	}
-	
-	test_parser_err! {
-		repeta_without_pana_cand,
-		(
-			1, 0,
-			RepetaWithoutPanaCand,
-		),
-		r#"
-			repeta
-				
-				
-		"#
-	}
-	
-	test_parser_err! {
-		repeta_without_pana_cand_short,
-		(
-			1, 0,
-			RepetaWithoutPanaCand,
-		),
-		r#"repeta"#
-	}
-	
-	test_parser_err! {
-		recursive_instruction_after_nonrecursive_instruction,
-		(
-			1, 17,
-			ExpectedBlocklessInstruction,
-		),
-		r#"
-			scrie 12+3 ; daca a=12 atunci
-		"#
-	}
-
-	test_parser_err! {
-		invalid_assignment_daca,
-		(
-			1, 7,
-			InvalidIdent(String::from("daca")),
-		),
-		r#"
-			daca <- 42
-		"#
-	}
-
-	test_parser_err! {
-		invalid_assignment_pentru,
-		(
-			1, 9,
-			InvalidIdent(String::from("pentru")),
-		),
-		r#"
-			pentru <- 42
-		"#
-	}
-
-	test_parser_err! {
-		invalid_assignment_daca_second,
-		(
-			1, 16,
-			InvalidIdent(String::from("daca"))
-		),
-		r#"
-			x <- 41; daca <- 42
-		"#
-	}
-
-	test_parser_err! {
-		assignment_type_error,
-		(
-			1, 5,
-			ExpectedValueType(make_bitflags!(ValueType::{Float | List})),
-		),
-		r#"
-			x <- 41 < 12
-		"#
-	}
-
-	test_parser_err! {
-		daca_type_error,
-		(
-			1, 5,
-			ExpectedValueType(make_bitflags!(ValueType::{Bool})),
-		),
-		r#"
-			daca 41 atunci
-				scrie "da"
-		"#
-	}
-
-	test_parser_err! {
-		expected_lvalue,
-		(
-			1, 0,
-			ExpectedLvalue,
-		),
-		r#"
-			x+41 <- 42
-		"#
-	}
-
-	test_parser_ok! {
-		parse_citeste,
-		r#"
-			a <- 1,2,3
-			b <- 41; c <- 42
-			citeste a[0], b, c, a[1]
-		"#
-	}
-
-	test_parser_ok! {
-		parse_cat_ident,
-		r#"
-			cat <- 42
-			a <- 41
-			cat <-> a
-
-			x <- (1+2+cat) * cat
-
-			cât <- cat
-		"#
-	}
 }

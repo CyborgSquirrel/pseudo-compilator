@@ -3,7 +3,7 @@ use enumflags2::make_bitflags;
 use crate::{ast::{
 	Instructiune,
 	ScrieParam,
-	Ident, InstructiuneNode, AtribuireRvalue, ListRvalue, Lvalue, FloatRvalueNode, IdentNode}, source::{Offset, Node, Span}};
+	Ident, InstructiuneNode, AtribuireRvalue, ListRvalue, Lvalue, FloatRvalueNode, IdentNode}, source::{Offset, Node, Span}, LanguageSettings};
 use itertools::izip;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -14,13 +14,19 @@ pub type ParserResult<T> = Result<T, ParserError>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LineCursor<'src> {
+	pub language_settings: &'src LanguageSettings,
 	pub code: &'src str,
 	pub offset: Offset,
 }
 
 impl<'src> LineCursor<'src> {
-	pub fn new(code: &'src str, offset: Offset) -> Self {
+	pub fn new(
+		language_settings: &'src LanguageSettings,
+		code: &'src str,
+		offset: Offset,
+	) -> Self {
 		Self {
+			language_settings,
 			code,
 			offset,
 		}
@@ -233,7 +239,7 @@ impl<'src> LineCursor<'src> {
 			let start_offset = self.offset;
 
 			// see if it's an empty list
-			{
+			if self.language_settings.enable_list {
 				if let Ok((new_self, _)) = new_self.expect_str(",") {
 					let span = start_offset.span(&new_self.offset);
 					let new_self = new_self.skip_spaces();
@@ -248,7 +254,13 @@ impl<'src> LineCursor<'src> {
 			}
 
 			let (new_self, operand) = new_self.parse_operand()?;
-			if let Ok((mut new_self, _)) = new_self.skip_spaces().expect_str(",") {
+			if let (
+				Ok((mut new_self, _)),
+				true,
+			) = (
+				new_self.skip_spaces().expect_str(","),
+				self.language_settings.enable_list,
+			) {
 				let mut list = Vec::new();
 				list.push(operand.into_float()?);
 

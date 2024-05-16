@@ -7,7 +7,7 @@ use super::{get_grapheme_kind, GraphemeKind, ValueTypeFlags, ValueType, line::Li
 use crate::{ast::{
 	Ident,
 	FloatUnop, FloatBinop, BoolBinop, FloatRvalue, BoolRvalue, BoolUnop, BoolBoolBinop, BoolFloatBinop, ListRvalue, FloatLvalue, ListLvalue, Lvalue, IdentNode, BoolRvalueNode, FloatRvalueNode, ListRvalueNode, UnknownRvalue, UnknownRvalueNode
-}, parse::Word, source::{Node, Span}};
+}, parse::Word, source::{Node, Span}, LanguageSettings};
 use super::line::ParserIntermediateResult;
 
 macro_rules! any {
@@ -177,7 +177,11 @@ enum ParenKind {
 }
 
 impl ParenKind {
-	fn get(expecting: ExpectingFlags, left: &str) -> Option<Self> {
+	fn get(
+		language_settings: &LanguageSettings,
+		expecting: ExpectingFlags,
+		left: &str,
+	) -> Option<Self> {
 		Some(
 			match left {
 				"(" => {
@@ -193,7 +197,11 @@ impl ParenKind {
 					if expecting.contains(Expecting::Rvalue) {
 						ParenKind::IntegralPart
 					} else if expecting.contains(Expecting::Operator) {
-						ParenKind::Index
+						if language_settings.enable_list {
+							ParenKind::Index
+						} else {
+							return None;
+						}
 					} else {
 						return None
 					}
@@ -307,7 +315,7 @@ impl<'src> Parser<'src> {
 		let start_offset = self.cursor.offset;
 		
 		let (new_cursor, lparen_grapheme) = unwrap_or_return!(self.cursor.read_one(), false);
-		let op = unwrap_or_return!(ParenKind::get(self.expecting, lparen_grapheme), false);
+		let op = unwrap_or_return!(ParenKind::get(self.cursor.language_settings, self.expecting, lparen_grapheme), false);
 		
 		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Rvalue});
 		self.cursor = new_cursor;
@@ -386,7 +394,7 @@ impl<'src> Parser<'src> {
 				let y = self.operands.pop().unwrap();
 				let x = self.operands.pop().unwrap().into_ident()?;
 				match x.inner().0 {
-					"lungime" => {
+					"lungime" if self.cursor.language_settings.enable_list => {
 						let y = y.into_list()?;
 						let rvalue = FloatRvalue::ListLength(y);
 						let span = x.span().merge(&parens_span);

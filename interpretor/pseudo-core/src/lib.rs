@@ -7,9 +7,14 @@ pub use compiler::{Compiler, CompilerError};
 pub use inkwell::{context::Context, OptimizationLevel};
 use itertools::Itertools;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LanguageSettings {
 	pub epsilon: f64,
+	pub enable_list: bool,
+}
+
+impl LanguageSettings {
+	pub const DEFAULT_EPSILON: f64 = 0.000001;
 }
 
 impl parse::ParserError {

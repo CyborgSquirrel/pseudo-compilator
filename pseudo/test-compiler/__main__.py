@@ -121,6 +121,22 @@ class Test(unittest.TestCase):
 			"da\n",
 		)
 
+	def test_insereaza_sterge(self):
+		self.assertExpectedOutput(
+			"""
+			list <- ,
+			pentru i<-1,10 execută
+				inserează list,i-1,i
+			pentru i<-0,lungime(list)-1 execută
+				scrie list[i]
+			cât timp lungime(list) > 0 execută
+				șterge list,lungime(list)-1
+			scrie lungime(list)
+			""",
+			"1.000000\n2.000000\n3.000000\n4.000000\n5.000000\n"
+			"6.000000\n7.000000\n8.000000\n9.000000\n10.000000\n0.000000\n",
+		)
+
 
 if __name__ == "__main__":
 	unittest.main()

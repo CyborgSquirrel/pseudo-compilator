@@ -362,6 +362,34 @@ test_parser_ok! {
 	"#
 }
 
+test_parser_ok! {
+	parse_insereaza,
+	r#"
+		insereaza list,0,10
+	"#
+}
+
+test_parser_ok! {
+	parse_sterge,
+	r#"
+		sterge list,0
+	"#
+}
+
+test_parser_ok! {
+	parse_insereaza_sterge,
+	r#"
+		list <- ,
+		pentru i<-1,10 execută
+			inserează list,i-1,i
+		pentru i<-0,lungime(list)-1 execută
+			scrie list[i]
+		cât timp lungime(list) > 0 execută
+			șterge list,lungime(list)-1
+		scrie lungime(list)
+	"#
+}
+
 // tests where lists are disabled
 
 macro_rules! language_settings {
@@ -422,5 +450,25 @@ test_parser_err! {
 	),
 	r#"
 		x <- lungime(a)
+	"#
+}
+
+test_parser_err! {
+	no_list_parse_insereaza,
+	(
+		1, 10,
+	),
+	r#"
+		insereaza list,0,10
+	"#
+}
+
+test_parser_err! {
+	no_list_parse_sterge,
+	(
+		1, 7,
+	),
+	r#"
+		sterge list,0
 	"#
 }

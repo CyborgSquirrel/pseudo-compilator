@@ -46,15 +46,18 @@ pub enum Word {
 }
 
 impl Word {
-	fn from_name(name: &str) -> Option<Self> {
+	fn from_name(
+		language_settings: &LanguageSettings,
+		name: &str,
+	) -> Option<Self> {
 		Some(match name {
 			"daca"|"dacă" => Word::Daca,
 			"cat"|"cât" => Word::Cat,
 			"pentru" => Word::Pentru,
 			"scrie" => Word::Scrie,
 			"citeste"|"citește" => Word::Citeste,
-			"insereaza"|"inserează" => Word::Insereaza,
-			"sterge"|"șterge" => Word::Sterge,
+			"insereaza"|"inserează" if language_settings.enable_list => Word::Insereaza,
+			"sterge"|"șterge" if language_settings.enable_list => Word::Sterge,
 			_ => return None,
 		})
 	}

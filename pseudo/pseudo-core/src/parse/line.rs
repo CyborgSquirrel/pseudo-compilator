@@ -475,7 +475,7 @@ impl<'src> LineCursor<'src> {
 				_ => (),
 			}
 
-			let word = Word::from_name(name);
+			let word = Word::from_name(self.language_settings, name);
 			(new_self, (name, word))
 		})
 	}

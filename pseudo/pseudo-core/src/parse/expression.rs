@@ -424,7 +424,7 @@ impl<'src> Parser<'src> {
 				Err(..) => return Err(self.cursor.offset.make_err(ParserErrorKind::InvalidFloatLiteral)),
 			}
 			_ => {
-				let word = Word::from_name(name);
+				let word = Word::from_name(self.cursor.language_settings, name);
 				if word.as_ref().map(Word::can_be_ident).unwrap_or(true) {
 					Operand::Ident(span.node(Ident(name)))
 				} else {

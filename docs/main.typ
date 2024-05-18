@@ -149,7 +149,7 @@ Scratch@maloney2010scratch is a programming environment that is primarily aimed 
 
 // MIX and MMIX are hypothetical computers, with their own respective assembly languages, used in Donald Knuth's "The Art of Computer Programming", with the purpose of educating people about what goes on inside a computer.
 
-Python is a programming language, whose educational potential had been recognized as early as 2012@kruglyk2012choosing. The syntax is easy to learn, the type system is forgiving, as the language is dynamically typed, and there is also a wealth of easily installable packages, which allow users to do develop complex projects, ranging from GUI applications to web servers.
+Python is a programming language, whose educational potential was recognized as early as 2012@kruglyk2012choosing. The syntax is easy to learn, the type system is forgiving, as the language is dynamically typed, and there is also a wealth of easily installable packages, which allow users to do develop complex projects, ranging from GUI applications to web servers.
 
 However, we posit that Python is not an optimal language for use cases such as standardized testing. Despite the language's outward simplicity, in reality it possesses a large set of features, which is constantly being expanded with updates. It would be unreasonable to ask of all test graders to learn the entirety of Python, and to regularly learn the newest features. But it would also be inconvenient to limit students to writing only a particular version of Python, or to only use a particular set of features.
 
@@ -166,9 +166,18 @@ points in favor of Pseudocode:
 
 */
 
-Our work, Pseudocode, is a language that has a specific target audience -- high-school pupils in Romania, a specific goal -- teaching the basics of imperative computer programming, and it also has significant adoption, being put forward by the Romanian Government. Its specification has not appeared to change since its inception#todo[fact check?], and it is already part of the Romanian Baccalaureate.
+The Pseudocode programming language that is part of the Romanian Baccalaureate does not appear to possess an official specification, nor an implementation. It is targeted at a highly specific target audience -- high-school level pupils in Romania, and it accomplishes a specific goal -- teaching the basics of imperative computer programming, together with some algorithms.
 
-Taking into account that governments typically adopt new technology at a slow pace, we believe it unlikely that Pseudocode will be replaced soon. Therefore, it is worthwile to improve the user experience of Pseudocode, developing compilers, editors, debuggers for it, with the goal of helping pupils to learn, and assisting teachers and graders.
+/*
+
+1. Pseudocode has advantages for examination, being a fixed and very simple language
+2. governments adopt new technology slowly
+
+*/
+
+We believe that it is unlikely that the languages we have enumerated prior would be able to replace Pseudocode in the Romanian Baccalaureate. Our reasoning is twofold. First, Pseudocode possesses properties which are advantageous for its purpose of being used in examinations: it is a simple language, which does not receive updates, and which can be very quickly learned in its entirety. Second, governments generally tend to change and take up new technologies slowly #todo[cite], which means that even if an alternative language which happens to be better than Pseudocode is developed, it is not guaranteed when or if it will be adopted.
+
+With all this in mind, we believe it's worthwhile to improve the user experience of Pseudocode, by developing editors, compilers, debuggers, etc.. It has the potential of encouraging and helping high-school students in Romania, on their path to learning informatics, while also assisting teachers and exam graders.
 
 = Theory <theory>
 
@@ -263,11 +272,47 @@ For example, compiling the C program in @simple_c_program, results in the LLVM I
 
 == Pseudocode language description
 
-The implemented pseudocode language is aimed to be as close as possible to the pseudocode language used in the Romanian informatics Baccalaureate exam. We have not found an official specification of this language, therefore we have devised our own, based on code samples from previous Baccalaureate exams.
+We aimed to make our implementation of the Pseudocode language as close to the version that is used in the Baccalaureate exam as possible, while keeping it easy to write. We will refer to the Pseudocode used in the Baccalaureate exam as "Baccalaureate Pseudocode", and to our implementation as "Pseudocode" or "our Pseudocode". Some of the main differences in syntax between our Pseudocode, and Baccalaureate Pseudocode, can be observed in @baccalaureate_vs_ours.
 
-The language is imperative. All variables are of floating point type. Code blocks are designated with indentation, akin to the approach taken in the Python programming language.
+While Baccalaureate Pseudocode uses box-drawing characters to delimit code blocks, we chose to simply use indentation, akin to what is done in the Python programming language. Additionally, we approximate characters such as `←` and `≤` (among others), with versions which are easier to type: `<-` and `<=`.
 
-The language is designed so as to be easy to use for a novice who is learning to program. To reduce surprise caused by floating point arithmetic, equality comparisons are performed using an $epsilon$ tolerance value. For an $epsilon>0$, two floating point numbers $x$ and $y$ are considered to be equal, if and only if $abs(x-y)<epsilon$.
+#figure(
+  kind: "code",
+  caption: [structurally equivalent Pseudocode, Baccalaureate (left) and ours (right)],
+)[
+  #columns(2)[
+    ```
+    citește x
+    i ← 2
+    ┌cât timp i*i ≤ x execută
+    │	┌dacă x % i = 0 atunci
+    │	│	scrie i
+    │	│	┌dacă i ≠ x/i atunci
+    │	│	│	scrie x/i
+    │	│	└■
+    │	└■
+    │	i ← i+1
+    └■
+    ```
+    #colbreak()
+    ```
+    citește x
+    i <- 2
+    cât timp i*i <= x execută
+    	dacă x % i = 0 atunci
+    		scrie i
+    		dacă i != x/i atunci
+    			scrie x/i
+    	i <- i+1
+    ```
+  ]
+] <baccalaureate_vs_ours>
+
+The Pseudocode language accomodates an imperative programming style. In Baccalaureate Pseudocode, variables may only be of floating point type. In our implementation, variables may also be lists of floating point numbers (further described in @lists_section). This functionality may be disabled, so that the compiler's behavior will match the Baccalaureate more closely.
+
+One issue that arises when the only numeric type is floating-point numbers, is verifying whether two numbers are equal. An experienced programmer will know to use an $epsilon$ threshold value, and to perform a comparison between $x$ and $y$ using a formula such as $abs(x-y)<epsilon$, however Pseudocode is not aimed at experienced programmers.
+
+On the contrary, its supposed to assist high school students, who have just started to learn to program. Taking this into consideration, we decided to make the compiler automatically generate comparisons this way.
 
 === Supported statements
 
@@ -328,21 +373,42 @@ pentru i <- 1,100 execută
   scrie i
 ```] <for>
 
+=== Lists <lists_section>
+
+We extended the language with lists, so that pupils may use Pseudocode to study more complex algorithms involving lists.
+
+#figure(kind: "code", caption: [#todo[]])[
+```
+list <- 1,2,3,4,5
+pentru i<-0,lungime(list)-1 execută
+  list[i] <- list[i]+1
+  scrie list[i]
+```] <lists_example>
+
+#figure(kind: "code", caption: [#todo[]])[
+```
+list <- 1,2,3,4,5
+pentru i<-0,lungime(list)-1 execută
+  list[i] <- list[i]+1
+  scrie list[i]
+```] <lists_example_two>
+
 === Sample programs
 
 Despite being a simple language, it posesses enough complexity so as to be used for educational purposes, for instance teaching students an algorithm.
 
-The following sample program calculates all the divisors for a number that is read from the command line:
+The following sample program performs bubble sort on an unordered list of numbers:
 #figure(kind: "code", caption: [#todo[write smth]])[
 ```
-citește x
-i <- 2
-cât timp i*i <= x execută
-	dacă x % i = 0 atunci
-		scrie i
-		dacă i != x/i atunci
-			scrie x/i
-	i <- i+1
+list <- 53, 34, 12, 665, 34, 23, 54, 65, 123, 65
+
+pentru i<-0,lungime(list)-1-1 executa
+	pentru j<-0,lungime(list)-i-1-1 executa
+		daca list[j] > list[j+1] atunci
+			list[j] <-> list[j+1]
+
+pentru i<-0,lungime(list)-1 executa
+	scrie list[i]
 ``` ]
 
 The following program approximates the value of $sin(x)$, by way of Taylor polynomial, $x$ being read from the command line:
@@ -367,6 +433,8 @@ scrie r
 === EBNF Grammar
 
 Grammar of pseudocode language in EBNF.
+
+#todo[add lists and clear up writing and variables]
 
 `IDENT_GRAPHEME` is any unicode grapheme, with the exception of: `+-*/%|=!<>()[]`.
 
@@ -420,9 +488,11 @@ Instr =
 InstrLine = Instr NEWLINE.
 ```
 
-== Implementation of pseudocode language
+== Compiler implementation
 
 Rust was chosen as the implementation language, for its performance and memory-safety characteristics. Rust's safety guarantees are especially useful in the implementation of the parser, because they enable the developer to safely process strings, without excessive copying, which would harm performance.
+
+Also, Rust's strong type system made it easier to catch mistakes while writing the code.
 
 Additionally, in the implementation, all diacritics which are part of keywords are considered to be optional, so as to ease the process of writing pseudocode programs. In the following example, both lines will be parsed as the `citește` statement.
 ```
@@ -431,6 +501,8 @@ citeste x
 ```
 
 === Parsing
+
+#todo[explain that no tokenizing is done, and the whole thing is parsed in one pass; that is in part because of `<-`, which can either show up in an assignment (e.g. `a <- 42`), or in a boolean expression, signifying "less than a negative of something" `daca x<-42 atunci`]
 
 Use recursive descent because of the particularities of this programming languages, such as having spaces inside keywords, like `cât timp` and `până când`. The code consists of small functions, each function having a very specific purpose, such as parsing a boolean operator, or an if statement.
 
@@ -491,6 +563,28 @@ After the executable is run, the backend proxies all communication between the f
 #figure(caption: [online editor frontend])[#image("res/editor.png")]
 
 // If the code happ
+
+= Future work
+
+== Syntax highlighting
+
+Syntax highlighting could be added to the editor. It would not even be that difficult: as it's parsing, the parser basically extracts all the information necessary for syntax highlighting. It would have to be slightly modified for this task, but it would not be a very significant modification.
+
+Then, this modified parser could be compiled to WebAssembly, and included into the final editor website. If you ignore indentation, then if you parse the entire document, then change one line, only that line will have to be re-parsed. Therefore, syntax highlighting could be done quite efficiently, by re-parsing and re-highlighting only lines of code that have been changed.
+
+== Improved error message source location
+
+Currently, when a parsing error happens, the parser only outputs the line and column where the error happened. Due to this, all the editor can do, is highlight the line where the error happened. It would be better if the parser returned a starting and ending pair of (line, column). This way, the exact location where the error occured would be easier to find, and errors would be easier to diagnose and fix.
+
+== Execution of source code from a photo
+
+#let ocr_footnote = footnote[
+  For example, Google's Cloud Vision API (https://cloud.google.com/vision/docs/handwriting) can extract handwriting from an image.
+]
+
+A potentially useful feature for pupils, teachers, and exam graders alike, would be the possiblity to easily execute Pseudocode source code, that has been written on a piece of paper. This could be achieved by integrating our compiler with a handwriting detection OCR system#ocr_footnote.
+
+As Pseudocode is very commonly written on paper, this would make it easier for everyone to execute and check it.
 
 = Conclusions
 

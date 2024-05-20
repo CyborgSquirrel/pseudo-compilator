@@ -64,7 +64,7 @@ impl parse::ParserError {
 				format!("până aici ar fi trebuit să se termine instrucțiunea."),
 
 			ExpectedSomethingElse(expecting) => {
-				assert!(expecting.contains(parse::expression::Expecting::Rvalue));
+				assert!(expecting.contains(parse::expression::Expecting::Operand));
 				format!("aici ar fi trebuit să apară o valoare.")
 			}
 			MismatchedParens =>

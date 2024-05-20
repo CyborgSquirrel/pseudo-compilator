@@ -58,7 +58,7 @@ test_parser_err! {
 	missing_operand_or_unop,
 	(
 		1, 15,
-		ExpectedSomethingElse(make_bitflags!(Expecting::{PrefixUnop | Rvalue})),
+		ExpectedSomethingElse(make_bitflags!(Expecting::{PrefixUnop | Operand})),
 	),
 	r#"scrie   4141+  "#
 }
@@ -67,7 +67,7 @@ test_parser_err! {
 	missing_operand,
 	(
 		1, 16,
-		ExpectedSomethingElse(make_bitflags!(Expecting::{Rvalue})),
+		ExpectedSomethingElse(make_bitflags!(Expecting::{Operand})),
 	),
 	r#"scrie   4141+-  "#
 }
@@ -85,7 +85,7 @@ test_parser_err! {
 	too_many_unops,
 	(
 		1, 7,
-		ExpectedSomethingElse(make_bitflags!(Expecting::{Rvalue})),
+		ExpectedSomethingElse(make_bitflags!(Expecting::{Operand})),
 	),
 	r#"scrie ++41+1"#
 }
@@ -94,7 +94,7 @@ test_parser_err! {
 	empty_parens,
 	(
 		1, 4,
-		ExpectedSomethingElse(make_bitflags!(Expecting::{PrefixUnop | Rvalue})),
+		ExpectedSomethingElse(make_bitflags!(Expecting::{PrefixUnop | Operand})),
 	),
 	r#"a<-()"#
 }
@@ -142,7 +142,7 @@ test_parser_err! {
 test_parser_err! {
 	invalid_indent,
 	(
-		2, 1,
+		2, 0,
 		InvalidIndent,
 	),
 	r#"
@@ -387,6 +387,19 @@ test_parser_ok! {
 		cât timp lungime(list) > 0 execută
 			șterge list,lungime(list)-1
 		scrie lungime(list)
+	"#
+}
+
+test_parser_ok! {
+	parse_nested,
+	r#"
+		a <- 41
+		daca a > 10 atunci
+			scrie "da"
+			daca a > 11 atunci
+				scrie "da"
+			
+			scrie "da"
 	"#
 }
 

@@ -161,7 +161,7 @@ pub enum Expecting {
 	PrefixUnop,
 	
 	// This also includes LParens.
-	Rvalue,
+	Operand,
 	
 	// This also includes RParens, and is a marker for the end.
 	Operator,
@@ -185,7 +185,7 @@ impl ParenKind {
 		Some(
 			match left {
 				"(" => {
-					if expecting.contains(Expecting::Rvalue) {
+					if expecting.contains(Expecting::Operand) {
 						ParenKind::Ident
 					} else if expecting.contains(Expecting::Operator) {
 						ParenKind::FunctionCall
@@ -194,7 +194,7 @@ impl ParenKind {
 					}
 				}
 				"[" => {
-					if expecting.contains(Expecting::Rvalue) {
+					if expecting.contains(Expecting::Operand) {
 						ParenKind::IntegralPart
 					} else if expecting.contains(Expecting::Operator) {
 						if language_settings.enable_list {
@@ -286,7 +286,7 @@ impl<'src> Parser<'src> {
 			parse_bool,
 			
 			cursor,
-			expecting: make_bitflags!(Expecting::{PrefixUnop | Rvalue}),
+			expecting: make_bitflags!(Expecting::{PrefixUnop | Operand}),
 			operands: Vec::new(),
 			operators: Vec::new(),
 		}
@@ -303,7 +303,7 @@ impl<'src> Parser<'src> {
 		};
 		
 		let op = Operator::PrefixUnop(BoolOrFloatUnop::FloatUnop(op));
-		self.expecting = make_bitflags!(Expecting::{Rvalue});
+		self.expecting = make_bitflags!(Expecting::{Operand});
 		self.cursor = new_cursor;
 
 		self.operators.push(start_offset.span(&self.cursor.offset).node(op));
@@ -317,7 +317,7 @@ impl<'src> Parser<'src> {
 		let (new_cursor, lparen_grapheme) = unwrap_or_return!(self.cursor.read_one(), false);
 		let op = unwrap_or_return!(ParenKind::get(self.cursor.language_settings, self.expecting, lparen_grapheme), false);
 		
-		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Rvalue});
+		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Operand});
 		self.cursor = new_cursor;
 
 		self.operators.push(start_offset.span(&self.cursor.offset).node(Operator::ParenOp(op)));
@@ -519,7 +519,7 @@ impl<'src> Parser<'src> {
 		let node = span.node(op);
 		self.operators.push(node);
 
-		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Rvalue});
+		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Operand});
 
 		Ok(true)
 	}
@@ -556,7 +556,7 @@ impl<'src> Parser<'src> {
 		let node = span.node(op);
 		self.operators.push(node);
 
-		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Rvalue});
+		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Operand});
 
 		Ok(true)
 	}
@@ -579,7 +579,7 @@ impl<'src> Parser<'src> {
 		let node = span.node(op);
 		self.operators.push(node);
 
-		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Rvalue});
+		self.expecting = make_bitflags!(Expecting::{PrefixUnop | Operand});
 
 		Ok(true)
 	}
@@ -592,7 +592,7 @@ impl<'src> Parser<'src> {
 			any!(
 			  all!(self.expecting.contains(Expecting::PrefixUnop), self.try_prefix_float_unop()),
 	 			all!(
-	 				self.expecting.intersects(make_bitflags!(Expecting::{Rvalue | Operator})),
+	 				self.expecting.intersects(make_bitflags!(Expecting::{Operand | Operator})),
 	 				self.try_lparen_unop(),
 	 			),
 				all!(self.expecting.contains(Expecting::Operator), self.try_rparen_unop()?),
@@ -604,7 +604,7 @@ impl<'src> Parser<'src> {
 						(self.parse_bool && self.try_bool_bool_binop()?),
 					),
 				),
-				all!(self.expecting.contains(Expecting::Rvalue), self.try_other()?),
+				all!(self.expecting.contains(Expecting::Operand), self.try_other()?),
 			)
 		)
 	}

@@ -160,6 +160,7 @@ impl<'src> Cursor<'src> {
 			}
 			
 			// Compute indent for current line.
+			let mut indent_offset = self.offset;
 			let current_indent = {
 				let mut indent = 0;
 				for grapheme in self.code().graphemes(true) {
@@ -167,7 +168,7 @@ impl<'src> Cursor<'src> {
 						break;
 					}
 					indent += 1;
-					self.offset.add_grapheme(grapheme);
+					indent_offset.add_grapheme(grapheme);
 				}
 				indent
 			};
@@ -184,6 +185,8 @@ impl<'src> Cursor<'src> {
 				}
 				std::cmp::Ordering::Equal => (),
 			}
+
+			self.offset = indent_offset;
 
 			// Create line cursor with *current* offset.
 			let line_offset = self.offset;

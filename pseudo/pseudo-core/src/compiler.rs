@@ -149,7 +149,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 	fn get_debug_location(&self, location: &Offset) -> inkwell::debug_info::DILocation<'ctx> {
 		let debug_location = self.debug_info.builder.create_debug_location(
 			self.context,
-			location.line(),
+			location.line_one(),
 			location.column(),
 			self.debug_info.main_function.as_debug_info_scope(),
 			None,

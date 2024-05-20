@@ -22,7 +22,7 @@ impl<'ctx> DebugInfo<'ctx> {
 			false,
 			inkwell::debug_info::DWARFSourceLanguage::C,
 			path.file_name().unwrap().to_str().unwrap(),
-			path.parent().unwrap().to_str().unwrap(),
+			path.parent().unwrap().canonicalize().unwrap().to_str().unwrap(),
 			"pseudo-compiler",
 			false, // TODO: actually reflect whether it's optimized or not
 			"",

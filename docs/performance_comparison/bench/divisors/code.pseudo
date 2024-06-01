@@ -1,0 +1,11 @@
+citeste n
+pentru k <- 1,n executa
+	citeste a
+	
+	i <- 1
+	cat timp i*i <= a executa
+		daca a%i = 0 atunci
+			scrie i
+			daca i != a atunci
+				scrie a/i
+		i <- i+1

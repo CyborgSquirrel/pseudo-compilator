@@ -1,0 +1,14 @@
+citeste n
+
+list <- ,
+pentru i<-1,n executa
+	citeste x
+	insereaza list, i-1, x
+
+pentru i<-0,n-1-1 executa
+	pentru j<-0,n-i-1-1 executa
+		daca list[j] > list[j+1] atunci
+			list[j] <-> list[j+1]
+
+pentru i<-0,n-1 executa
+	scrie list[i]

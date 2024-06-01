@@ -35,7 +35,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for AtribuireRvalue<'src> {
     		let x = x.build_set_check(compiler)?;
     		let kind = x.inner().build_load_kind(compiler)?;
 
-    		let value_ptr = compiler.builder.build_alloca(compiler.external.variable, "value")?;
+    		let value_ptr = compiler.allocas_builder.build_alloca(compiler.external.variable, "value")?;
 
     		let float_block = compiler.context.append_basic_block(compiler.main_fn, "float");
     		let list_block = compiler.context.append_basic_block(compiler.main_fn, "list");
@@ -181,7 +181,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for [InstructiuneNode<'src>] {
 
 					let allocas: Vec<_> = (
 						lvalues.iter()
-						.map(|_| compiler.builder.build_alloca(compiler.context.f64_type(), ""))
+						.map(|_| compiler.allocas_builder.build_alloca(compiler.context.f64_type(), ""))
 						.collect::<Result<_, _>>()
 					)?;
 					

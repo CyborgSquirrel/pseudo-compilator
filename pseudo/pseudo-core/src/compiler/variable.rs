@@ -58,12 +58,12 @@ impl<'src, 'ctx> Node<Variable<'ctx>> {
 			
 			// save previous value
 			let prev_value = compiler.builder.build_load(compiler.external.variable, inner.value_ptr, "prev_value")?;
-			let prev_value_ptr = compiler.builder.build_alloca(compiler.external.variable, "prev_value_ptr")?;
+			let prev_value_ptr = compiler.allocas_builder.build_alloca(compiler.external.variable, "prev_value_ptr")?;
 			compiler.builder.build_store(prev_value_ptr, prev_value)?;
 
 			// save previous is_set
 			let prev_is_set = compiler.builder.build_load(compiler.context.i64_type(), inner.is_set_ptr, "prev_is_set")?;
-			let prev_is_set_ptr = compiler.builder.build_alloca(compiler.context.i64_type(), "prev_is_set_ptr")?;
+			let prev_is_set_ptr = compiler.allocas_builder.build_alloca(compiler.context.i64_type(), "prev_is_set_ptr")?;
 			compiler.builder.build_store(prev_is_set_ptr, prev_is_set)?;
 		
 			// perform store

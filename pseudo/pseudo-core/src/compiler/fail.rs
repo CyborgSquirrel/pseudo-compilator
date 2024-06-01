@@ -45,7 +45,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			let float_block = self.context.append_basic_block(self.main_fn, "float");
 			let list_block = self.context.append_basic_block(self.main_fn, "list");
 
-			let type_str_ptr_ptr = self.builder.build_alloca(self.context.i8_type().ptr_type(AddressSpace::default()), "type_str_ptr")?;
+			let type_str_ptr_ptr = self.allocas_builder.build_alloca(self.context.i8_type().ptr_type(AddressSpace::default()), "type_str_ptr")?;
 
 			self.builder.build_switch(
 				type_,

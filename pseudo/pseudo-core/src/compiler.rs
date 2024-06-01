@@ -5,7 +5,7 @@ use std::{collections::HashMap, path::Path};
 
 use pseudo_sys::VariableKind;
 
-use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, debug_info::AsDIScope, FloatPredicate};
+use inkwell::{context::Context, values::{FloatValue, FunctionValue, PointerValue, AnyValue}, builder::Builder, module::Module, debug_info::AsDIScope, FloatPredicate, basic_block::BasicBlock};
 
 use crate::{ast::{InstructiuneNode, IdentNode}, parse, source::{Offset, Node, Span}, LanguageSettings};
 
@@ -35,8 +35,11 @@ pub struct Compiler<'src, 'ctx> {
 
 	builder: Builder<'ctx>,
 
-	variables_builder: Builder<'ctx>,
+	allocas_builder: Builder<'ctx>,
 	variables: HashMap<&'src str, Variable<'ctx>>,
+
+	misc_builder: Builder<'ctx>,
+	misc_block: BasicBlock<'ctx>,
 	
 	main_fn: FunctionValue<'ctx>,
 
@@ -78,19 +81,29 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			let main_fn = module.add_function("main", context.i64_type().fn_type(&[], false), None);
 			main_fn.set_subprogram(debug_info.main_function);
 
-			// variables
-			let variables_builder = context.create_builder();
-			let variables_block = context.append_basic_block(main_fn, "variables");
-			variables_builder.position_at_end(variables_block);
+			// allocas
+			//
+			// NOTE: Apparently LLVM expects for allocas to be declared at the beginning
+			// of functions, otherwise the mem2reg optimization does not function very
+			// well, and this leads to the program constantly spilling variables to the
+			// stack, and eventually blowing the stack up.
+			let allocas_builder = context.create_builder();
+			let allocas_block = context.append_basic_block(main_fn, "allocas");
+			allocas_builder.position_at_end(allocas_block);
+
+			// misc
+			let misc_builder = context.create_builder();
+			let misc_block = context.append_basic_block(main_fn, "misc");
+			misc_builder.position_at_end(misc_block);
+
+			let float_type_name_ptr = misc_builder.build_global_string_ptr("expresie", "float_type_name")?.as_pointer_value();
+			let list_type_name_ptr = misc_builder.build_global_string_ptr("listă", "list_type_name")?.as_pointer_value();
+
+			let fail_variable_unset_format_ptr = misc_builder.build_global_string_ptr("[%d:%d] Eroare: variabila „%s” nu are nici o valoare.\n", "format")?.as_pointer_value();
+			let fail_type_error_format_ptr = misc_builder.build_global_string_ptr("[%d:%d] Eroare: valoarea are tipul „%s”, însă ar fi trebuit să fi avut tipul „%s”.\n", "format")?.as_pointer_value();
+			let fail_range_error_format_ptr = misc_builder.build_global_string_ptr("[%d:%d] Eroare: indicele %lf iese din intervalul [%lf; %lf).\n", "format")?.as_pointer_value();
 
 			let builder = context.create_builder();
-
-			let float_type_name_ptr = variables_builder.build_global_string_ptr("expresie", "float_type_name")?.as_pointer_value();
-			let list_type_name_ptr = variables_builder.build_global_string_ptr("listă", "list_type_name")?.as_pointer_value();
-
-			let fail_variable_unset_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: variabila „%s” nu are nici o valoare.\n", "format")?.as_pointer_value();
-			let fail_type_error_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: valoarea are tipul „%s”, însă ar fi trebuit să fi avut tipul „%s”.\n", "format")?.as_pointer_value();
-			let fail_range_error_format_ptr = variables_builder.build_global_string_ptr("[%d:%d] Eroare: indicele %lf iese din intervalul [%lf; %lf).\n", "format")?.as_pointer_value();
 
 			let mut compiler = Self {
 				language_settings,
@@ -100,8 +113,11 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 				builder,
 
-				variables_builder,
+				allocas_builder,
 				variables: HashMap::new(),
+
+				misc_builder,
+				misc_block,
 	
 				main_fn,
 				external,
@@ -116,10 +132,6 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			};
 
 			let program = parse::parse(&language_settings, code)?;
-			{
-				let location = Offset::new(0, 0);
-				compiler.variables_builder.set_current_debug_location(compiler.get_debug_location(&location));
-			}
 			compiler.compile_parsed(&program)?;
 
 			compiler
@@ -136,7 +148,9 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 		instructions.compile(self)?;
 		self.builder.build_call(self.external.exit, &[self.context.i64_type().const_int(0, false).into()], "")?;
 		self.builder.build_return(Some(&self.context.i64_type().const_int(0, false)))?;
-		self.variables_builder.build_unconditional_branch(start_block)?;
+
+		self.allocas_builder.build_unconditional_branch(self.misc_block)?;
+		self.misc_builder.build_unconditional_branch(start_block)?;
 
 		self.debug_info.builder.finalize();
 		self.module.verify().map_err(VerificationError::from)?;
@@ -163,13 +177,13 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			if !self.variables.contains_key(key) {
 				let value_ptr = {
 					let name = format!("value_{key}");
-					self.variables_builder.build_alloca(self.external.variable, name.as_str())?
+					self.allocas_builder.build_alloca(self.external.variable, name.as_str())?
 				};
 
 				let is_set_ptr = {
 					let name = format!("is_set_{key}");
-					let alloca = self.variables_builder.build_alloca(self.context.i64_type(), name.as_str())?;
-					self.variables_builder.build_store(alloca, self.context.i64_type().const_zero())?;
+					let alloca = self.allocas_builder.build_alloca(self.context.i64_type(), name.as_str())?;
+					self.misc_builder.build_store(alloca, self.context.i64_type().const_zero())?;
 					alloca
 				};
 
@@ -193,8 +207,8 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 					value_ptr,
 					Some(debug_variable),
 					None,
-					self.get_debug_location(&Offset::new(0, 0)),
-					self.variables_builder.get_insert_block().unwrap(),
+					self.get_debug_location(&ident.span().0),
+					self.allocas_builder.get_insert_block().unwrap(),
 				);
 
 				let value = Variable {
@@ -211,7 +225,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 	fn build_float_struct(&self, inner: FloatValue<'ctx>) -> CompilerResult<PointerValue<'ctx>> {
 		Ok({
-			let struct_ptr = self.builder.build_alloca(self.external.variable_float, "struct")?;
+			let struct_ptr = self.allocas_builder.build_alloca(self.external.variable_float, "struct")?;
 
 			let kind_ptr = self.builder.build_struct_gep(
 				self.external.variable_float,
@@ -241,7 +255,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 
 	fn build_list_struct(&self, inner: PointerValue<'ctx>) -> CompilerResult<PointerValue<'ctx>> {
 		Ok({
-			let struct_ptr = self.builder.build_alloca(self.external.variable_list, "struct")?;
+			let struct_ptr = self.allocas_builder.build_alloca(self.external.variable_list, "struct")?;
 
 			let kind_ptr = self.builder.build_struct_gep(
 				self.external.variable_list,

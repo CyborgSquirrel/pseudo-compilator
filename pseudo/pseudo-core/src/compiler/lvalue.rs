@@ -35,7 +35,7 @@ impl<'src, 'ctx> CompileLvalue<'src, 'ctx> for Node<FloatLvalue<'src>> {
 
 				compiler.build_list_range_check(self.span(), inner, index, compiler.context.f64_type().const_zero())?;
 
-				let value_ptr = compiler.builder.build_alloca(compiler.external.variable, "value_ptr")?;
+				let value_ptr = compiler.allocas_builder.build_alloca(compiler.external.variable, "value_ptr")?;
 				compiler.builder.build_store(value_ptr, value)?;
 				let value = SetVariable { value_ptr };
 				let value = self.span().node(value);

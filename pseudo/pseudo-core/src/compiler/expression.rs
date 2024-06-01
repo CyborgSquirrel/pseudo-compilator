@@ -185,7 +185,7 @@ impl<'src, 'ctx> Compile<'src, 'ctx> for ListRvalueNode<'src> {
   		ListRvalue::Literal(x) => {
   			// create array with values
   			let array_type = compiler.context.f64_type().array_type(x.len() as u32);
-  			let array_ptr = compiler.builder.build_alloca(array_type, "array")?;
+  			let array_ptr = compiler.allocas_builder.build_alloca(array_type, "array")?;
   			for (i, x) in x.iter().enumerate() {
   				let x = x.compile(compiler)?;
   				let x_ptr = unsafe {

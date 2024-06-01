@@ -33,7 +33,7 @@ class Test(unittest.TestCase):
 
 			output = subprocess.run([
 				str(exe_path),
-			], capture_output=True)
+			], capture_output=True, check=True)
 
 			actual_output = output.stdout.decode()
 			self.assertEqual(expected_output, actual_output)
@@ -135,6 +135,18 @@ class Test(unittest.TestCase):
 			""",
 			"1.000000\n2.000000\n3.000000\n4.000000\n5.000000\n"
 			"6.000000\n7.000000\n8.000000\n9.000000\n10.000000\n0.000000\n",
+		)
+
+	def test_stack_doesnt_overflow(self):
+		"""Make sure the stack does not overflow, when program declares many variables. """
+		
+		self.assertExpectedOutput(
+			"""
+			pentru i<-0,1000 executa
+				pentru j<-0,1000 executa
+					x <- 1
+			""",
+			"",
 		)
 
 

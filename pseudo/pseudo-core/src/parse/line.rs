@@ -337,7 +337,7 @@ impl<'src> LineCursor<'src> {
 	fn parse_second_step_daca(self, old_self: Self) -> ParserResult<InstructiuneNode<'src>> {
 		let new_self = self;
 		let (new_self, rvalue) = new_self.skip_spaces().parse_bool_rvalue()?;
-		let (new_self, _) = new_self.skip_spaces().expect_str_optional_diacritics("atunci")?;
+		let (new_self, _) = new_self.skip_spaces().expect_str("atunci")?;
 		new_self.skip_spaces().expect_end()?;
 		
 		Ok(old_self.make_node(Instructiune::DacaAtunciAltfel(rvalue, Vec::new(), None)))
@@ -366,7 +366,7 @@ impl<'src> LineCursor<'src> {
 	}
 	
 	pub fn parse_altfel(self) -> ParserResult<()> {
-		let (new_self, _) = self.expect_str_optional_diacritics("altfel")?;
+		let (new_self, _) = self.expect_str("altfel")?;
 		new_self.skip_spaces().expect_end()?;
 		Ok(())
 	}

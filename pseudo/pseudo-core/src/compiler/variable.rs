@@ -60,6 +60,11 @@ impl<'src, 'ctx> Node<Variable<'ctx>> {
 			let prev_value = compiler.builder.build_load(compiler.external.variable, inner.value_ptr, "prev_value")?;
 			let prev_value_ptr = compiler.builder.build_alloca(compiler.external.variable, "prev_value_ptr")?;
 			compiler.builder.build_store(prev_value_ptr, prev_value)?;
+
+			// save previous is_set
+			let prev_is_set = compiler.builder.build_load(compiler.context.i64_type(), inner.is_set_ptr, "prev_is_set")?;
+			let prev_is_set_ptr = compiler.builder.build_alloca(compiler.context.i64_type(), "prev_is_set_ptr")?;
+			compiler.builder.build_store(prev_is_set_ptr, prev_is_set)?;
 		
 			// perform store
 			compiler.builder.build_store(inner.value_ptr, rvalue)?;
@@ -69,7 +74,25 @@ impl<'src, 'ctx> Node<Variable<'ctx>> {
 				compiler.context.i64_type().const_int(1, false),
 			)?;
 
-			// drop previous value, if it's a list
+			// check if previous value is set
+  		let merge_block = compiler.context.append_basic_block(compiler.main_fn, "merge");
+  		let cleanup_block = compiler.context.append_basic_block(compiler.main_fn, "cleanup");
+
+  		let is_set = compiler.builder.build_int_compare(
+  			IntPredicate::NE,
+  			prev_is_set.into_int_value(),
+				compiler.context.i64_type().const_zero(),
+				"check_is_set",
+  		)?;
+
+  		compiler.builder.build_conditional_branch(
+  			is_set,
+  			cleanup_block,
+  			merge_block,
+  		)?;
+
+			// perform cleanup for previous value, if it's set
+			compiler.builder.position_at_end(cleanup_block);
 			{
 				let x = SetVariable { value_ptr: prev_value_ptr };
 				let kind = x.build_load_kind(compiler)?;
@@ -115,6 +138,8 @@ impl<'src, 'ctx> Node<Variable<'ctx>> {
 
 	    	compiler.builder.position_at_end(merge_block);
 			}
+			compiler.builder.build_unconditional_branch(merge_block)?;
+			compiler.builder.position_at_end(merge_block);
 		})
 	}
 }

@@ -6,6 +6,8 @@ import axios from 'axios';
 import CommandLine from './CommandLine';
 import { PlayArrow, QuestionMark, Settings, Stop } from '@mui/icons-material';
 import SettingsModal from './SettingsModal';
+import { JobInput, JobOutput, JobResponse, PostJob } from './proto/main'
+import HelpModal from './HelpModal';
 
 const endpoint = "localhost:8000";
 
@@ -57,7 +59,7 @@ function App() {
   }, [endpoint]);
 
   const [jobId, setJobId] = React.useState<null|number>(null);
-  const [error, setError] = React.useState<null|any>(null);
+  const [error, setError] = React.useState<null|JobResponse.IParserError>(null);
   const [socket, setSocket] = React.useState<null|WebSocket>(null);
   const running = socket !== null;
 
@@ -72,8 +74,8 @@ function App() {
   const commandLineRef = React.useRef<null|HTMLDivElement>(null);
 
   React.useEffect(() => {
-    if (error !== null) {
-      setValueOutput(error.message);
+    if (error !== null && error !== undefined) {
+      setValueOutput(error.message!);
     }
 
     const editor = editorRef.current;
@@ -81,8 +83,8 @@ function App() {
       editor.view.dispatch({
         effects: [removeLineErrors.of(null)],
       });
-      if (error !== null) {
-        const line = editor.view.state.doc.line(error.line);
+      if (error !== null && error !== undefined) {
+        const line = editor.view.state.doc.line(error.line!);
         editor.view.dispatch({
           effects: [addLineError.of({from: line.from})],
         });
@@ -102,9 +104,14 @@ function App() {
     if (jobId !== null) {
       const socket = new WebSocket(`ws://${endpoint}/job/${jobId}/status`);
       socket.addEventListener("message", (event) => {
-        const data = JSON.parse(event.data);
-        setValueOutput((valueOutput) => valueOutput + data.stdout);
-
+        const messageObject = JSON.parse(event.data);
+        const message = JobOutput.fromObject(messageObject)
+        switch (message.message) {
+          case "stdout": {
+            setValueOutput((valueOutput) => valueOutput + message.stdout!.text);
+            break;
+          }
+        }
       });
       socket.addEventListener("close", (_event) => {
         setJobId(null);
@@ -121,6 +128,7 @@ function App() {
   }, [valueOutput]);
 
   const [openSettings, setOpenSettings] = React.useState(false);
+  const [openHelp, setOpenHelp] = React.useState(false);
 
   const [compileLists, setCompileLists] = React.useState(() => {
     const valueRaw = localStorage.getItem("compileLists");
@@ -146,6 +154,11 @@ function App() {
       setCompileLists={setCompileLists}
     />
 
+    <HelpModal
+      open={openHelp}
+      setOpen={setOpenHelp}
+    />
+
     <div
       style={{
         height: "100%",
@@ -166,19 +179,25 @@ function App() {
             setJobId(null);
             setError(null);
 
-            const response = await instance.post("/job", {
+            const request = PostJob.create({
               code: valueCode,
-              language_enable_lists: compileLists,
+              languageEnableLists: compileLists,
             });
-            const data = response.data;
 
-            switch (data.message.type) {
+            const axiosResponse = await instance.post("/job", request.toJSON());
+            const response = JobResponse.fromObject(axiosResponse.data);
+
+            switch (response.result) {
               case "success": {
-                setJobId(data.message.job_id);
+                setJobId(response.success!.jobId!);
                 break;
               }
-              case "failure": {
-                setError(data.message.error)
+              case "parserError": {
+                setError(response.parserError!)
+                break;
+              }
+              case "otherError": {
+                setValueOutput(response.otherError! + "\n");
                 break;
               }
             }
@@ -189,11 +208,11 @@ function App() {
           onClick={async () => {
             if (socket === null) return;
 
-            socket.send(JSON.stringify({
-              message: {
-                type: "stop",
-              }
-            }));
+            const message = JobInput.fromObject({
+              stop: {},
+            })
+
+            socket.send(JSON.stringify(message.toJSON()));
           }}
           style={iconStyle}
         />
@@ -220,32 +239,31 @@ function App() {
         </div>
 
         {/* Put help button at the bottom, to reduce clutter. */}
-        {/*
-          <div
+
+        <div
+          style={{
+            flexGrow: 1,
+          }}
+        />
+
+        <div
+          onClick={() => {
+            setOpenHelp(true);
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            ...iconStyle
+          }}
+        >
+          <QuestionMark
             style={{
-              flexGrow: 1,
+              width: "80%",
+              height: "80%",
             }}
           />
-
-          <div
-            onClick={() => {
-              console.log("hello world!");
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              ...iconStyle
-            }}
-          >
-            <QuestionMark
-              style={{
-                width: "80%",
-                height: "80%",
-              }}
-            />
-          </div>
-        */}
+        </div>
       </div>
       <div
         style={{
@@ -354,12 +372,14 @@ function App() {
                 }
 
                 setCommandLineValue("");
-                socket.send(JSON.stringify({
-                  message: {
-                    type: "stdin",
-                    stdin: `${value}\n`,
+
+                const message = JobInput.create({
+                  stdin: {
+                    text: `${value}\n`,
                   }
-                }));
+                })
+                
+                socket.send(JSON.stringify(message));
               }}
             />
           </div>

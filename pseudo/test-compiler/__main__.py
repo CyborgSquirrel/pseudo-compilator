@@ -1,3 +1,7 @@
+import collections
+import itertools
+import os
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -7,6 +11,22 @@ from pathlib import Path
 FILE = Path(__file__)
 CARGO_WORKSPACE = FILE.parent.parent
 LIB_PATH = CARGO_WORKSPACE / "target" / "debug" / "libpseudo_sys.so"
+
+LLVM_PROFILE_DIR = FILE.parent / "prof"
+LLVM_PROFILE_MARKER = LLVM_PROFILE_DIR / "marker.txt"
+LLVM_PROFILE_MARKER_TEXT = "This directory contains LLVM profiling stuff!"
+if LLVM_PROFILE_DIR.exists():
+	if LLVM_PROFILE_MARKER.read_text().strip() != LLVM_PROFILE_MARKER_TEXT:
+		raise RuntimeError("Marker in profiling directory does not match")
+
+	shutil.rmtree(LLVM_PROFILE_DIR)
+
+LLVM_PROFILE_DIR.mkdir(parents=True)
+LLVM_PROFILE_MARKER.write_text(LLVM_PROFILE_MARKER_TEXT)
+
+LLVM_PROFILE_FILE = FILE.parent / "prof" / "default_%m_%p.profraw"
+
+LLVM_EXEC_PROFILE_FILES = (FILE.parent / "prof" / f"exec_{i}_%m_%p.profraw" for i in itertools.count())
 
 
 class Test(unittest.TestCase):
@@ -24,12 +44,22 @@ class Test(unittest.TestCase):
 
 			src_path.write_text(source)
 
-			subprocess.run([
-				"cargo", "run", "-p", "pseudo-cli", "--",
-				"--lib-path", str(LIB_PATH),
-				"--executable",
-				str(src_path), str(exe_path),
-			], capture_output=True)
+			env = dict(
+				RUSTFLAGS="-C instrument-coverage",
+				LLVM_PROFILE_FILE=str(next(LLVM_EXEC_PROFILE_FILES)),
+			)
+			proc_env = collections.ChainMap(env, os.environ)
+
+			subprocess.run(
+                [
+					"cargo", "run", "-p", "pseudo-cli", "--",
+					"--lib-path", str(LIB_PATH),
+					"--executable",
+					str(src_path), str(exe_path),
+				],
+				env=proc_env,
+				capture_output=True,
+			)
 
 			output = subprocess.run([
 				str(exe_path),
@@ -37,6 +67,21 @@ class Test(unittest.TestCase):
 
 			actual_output = output.stdout.decode()
 			self.assertEqual(expected_output, actual_output)
+
+	def test_other(self):
+		env = dict(
+			RUSTFLAGS="-C instrument-coverage",
+			LLVM_PROFILE_FILE=str(LLVM_PROFILE_FILE),
+		)
+		proc_env = collections.ChainMap(env, os.environ)
+
+		subprocess.run(
+            [
+				"cargo", "test", "--tests",
+			],
+			env=proc_env,
+			check=True,
+		)
 
 	def test_pentru_executa(self):
 		self.assertExpectedOutput(

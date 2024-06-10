@@ -50,7 +50,7 @@ impl parse::ParserError {
 			ExpectedValueType(type_flags) => {
 				let expected_types = {
 					type_flags.iter().map(|flag| match flag {
-						parse::ValueType::Float => "o expresie",
+						parse::ValueType::Float => "un număr",
 						parse::ValueType::Bool => "o condiție",
 						parse::ValueType::List => "o listă",
 					}).join(", ")

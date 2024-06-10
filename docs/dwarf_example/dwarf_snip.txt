@@ -1,0 +1,86 @@
+0x00000023:   DW_TAG_variable
+                DW_AT_type	(0x0000002a "char[9]")
+                DW_AT_decl_file	("/home/andrei/pseudo-interpretor/docs/dwarf_example/main.c")
+                DW_AT_decl_line	(11)
+
+0x0000002a:   DW_TAG_array_type
+                DW_AT_type	(0x00000036 "char")
+
+0x0000002f:     DW_TAG_subrange_type
+                  DW_AT_type	(0x0000003a "__ARRAY_SIZE_TYPE__")
+                  DW_AT_count	(0x09)
+
+0x00000035:     NULL
+
+0x00000036:   DW_TAG_base_type
+                DW_AT_name	("char")
+                DW_AT_encoding	(DW_ATE_signed_char)
+                DW_AT_byte_size	(0x01)
+
+0x0000003a:   DW_TAG_base_type
+                DW_AT_name	("__ARRAY_SIZE_TYPE__")
+                DW_AT_byte_size	(0x08)
+                DW_AT_encoding	(DW_ATE_unsigned)
+
+0x0000003e:   DW_TAG_subprogram
+                DW_AT_low_pc	(0x0000000000001130)
+                DW_AT_high_pc	(0x0000000000001133)
+                DW_AT_frame_base	(DW_OP_reg7 RSP)
+                DW_AT_call_all_calls	(true)
+                DW_AT_name	("main")
+                DW_AT_decl_file	("/home/andrei/pseudo-interpretor/docs/dwarf_example/main.c")
+                DW_AT_decl_line	(9)
+                DW_AT_type	(0x00000056 "int")
+                DW_AT_external	(true)
+
+0x0000004d:     DW_TAG_variable
+                  DW_AT_name	("student")
+                  DW_AT_decl_file	("/home/andrei/pseudo-interpretor/docs/dwarf_example/main.c")
+                  DW_AT_decl_line	(10)
+                  DW_AT_type	(0x0000005a "Student")
+
+0x00000055:     NULL
+
+0x00000056:   DW_TAG_base_type
+                DW_AT_name	("int")
+                DW_AT_encoding	(DW_ATE_signed)
+                DW_AT_byte_size	(0x04)
+
+0x0000005a:   DW_TAG_structure_type
+                DW_AT_name	("Student")
+                DW_AT_byte_size	(0x10)
+                DW_AT_decl_file	("/home/andrei/pseudo-interpretor/docs/dwarf_example/main.c")
+                DW_AT_decl_line	(3)
+
+0x0000005f:     DW_TAG_member
+                  DW_AT_name	("name")
+                  DW_AT_type	(0x0000007b "char *")
+                  DW_AT_decl_file	("/home/andrei/pseudo-interpretor/docs/dwarf_example/main.c")
+                  DW_AT_decl_line	(4)
+                  DW_AT_data_member_location	(0x00)
+
+0x00000068:     DW_TAG_member
+                  DW_AT_name	("age")
+                  DW_AT_type	(0x00000056 "int")
+                  DW_AT_decl_file	("/home/andrei/pseudo-interpretor/docs/dwarf_example/main.c")
+                  DW_AT_decl_line	(5)
+                  DW_AT_data_member_location	(0x08)
+
+0x00000071:     DW_TAG_member
+                  DW_AT_name	("gpa")
+                  DW_AT_type	(0x00000080 "float")
+                  DW_AT_decl_file	("/home/andrei/pseudo-interpretor/docs/dwarf_example/main.c")
+                  DW_AT_decl_line	(6)
+                  DW_AT_data_member_location	(0x0c)
+
+0x0000007a:     NULL
+
+0x0000007b:   DW_TAG_pointer_type
+                DW_AT_type	(0x00000036 "char")
+
+0x00000080:   DW_TAG_base_type
+                DW_AT_name	("float")
+                DW_AT_encoding	(DW_ATE_float)
+                DW_AT_byte_size	(0x04)
+
+0x00000084:   NULL

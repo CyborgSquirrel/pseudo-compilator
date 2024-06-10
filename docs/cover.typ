@@ -1,8 +1,8 @@
 #align(center)[
-  #set text(size: 20pt, weight: "bold")
+  #set text(size: 15pt, weight: "bold")
   BABEȘ-BOLYAI UNIVERSITY CLUJ-NAPOCA \
   FACULTY OF MATHEMATICS AND COMPUTER SCIENCE \
-  SPECIALIZATION [TODO] \
+  COMPUTER SCIENCE IN ROMANIAN SPECIALIZATION \
 ]
 
 #align(center + horizon)[
@@ -15,7 +15,7 @@
 #align(left + bottom)[
   #set text(size: 20pt, weight: "bold")
   Supervisor \
-  [Grad, titlu si nume coordonator]
+  Conf. Dr. Rareș Florin Boian
 ]
 #align(right + bottom)[
   #set text(size: 20pt)

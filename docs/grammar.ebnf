@@ -1,0 +1,56 @@
+FloatBinop = "+" | "-" | "*" | "/" | "%".
+FloatUnop = "+" | "-".
+FloatExpr =
+  FLOAT_LIT
+  | IDENT
+  | IDENT "[" FloatExpr "]"
+  | FloatUnop FloatExpr
+  | FloatExpr FloatBinop FloatExpr
+  | "[" FloatExpr "]"
+  | "(" FloatExpr ")"
+  | IDENT "(" FloatExpr ")".
+
+BoolFloatBinop = "=" | "!=" | "<" | ">" | "<=" | ">=" | "|".
+BoolBoolBinop = "sau" | "și".
+BoolExpr =
+    FloatExpr BoolFloatBinop FloatExpr
+  | BoolExpr BoolBoolBinop BoolExpr.
+
+ListLitRest = FloatExpr [ "," [ ListLitRest ] ].
+ListLit = "," | FloatExpr "," ListLitRest.
+
+InstrAtribuireParam = FloatExpr | ListLit.
+InstrAtribuire = IDENT "<-" InstrAtribuireParam.
+
+ScrieParam =
+  FloatExpr
+  | D_QUOTE { UNICODE_GRAPHEME_EXCEPT_D_QUOTE } D_QUOTE
+  | QUOTE { UNICODE_GRAPHEME_EXCEPT_QUOTE } QUOTE.
+InstrScrie = "scrie" ScrieParam { "," ScrieParam }.
+
+Lvalue = IDENT | IDENT "[" FloatExpr "]"
+InstrInterschimbare = Lvalue "<->" Lvalue.
+InstrCiteste = "citește" Lvalue { "," Lvalue }.
+
+InstrInsereaza = "inserează" IDENT "," FloatExpr "," FloatExpr.
+InstrSterge = "șterge" IDENT "," FloatExpr.
+
+Bloc = NEWLINE INDENT { InstrLine } DEDENT.
+InstrDaca = "dacă" BoolExpr "atunci" Bloc [ "altfel" Bloc ].
+InstrCatTimp = "cât timp" BoolExpr "execută" Bloc.
+InstrPentru =
+	"pentru" IDENT "<-" FloatExpr "," FloatExpr
+	[ "," FloatExpr ] "execută" Bloc.
+InstrRepeta = "repetă" Bloc "până când" BoolExpr.
+
+InstrRepeatable =
+    InstrAtribuire
+  | InstrInterschimbare
+  | InstrScrie
+  | InstrCiteste
+  | InstrCiteste
+  | InstrSterge.
+Instr =
+  InstrRepeatable { ";" InstrRepeatable }
+  | InstrDaca | InstrCatTimp | InstrPentru | InstrRepeta.
+InstrLine = Instr NEWLINE.

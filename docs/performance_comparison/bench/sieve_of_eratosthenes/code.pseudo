@@ -1,0 +1,11 @@
+citeste n
+
+sieve <- ,
+pentru i<-1,n executa
+	insereaza sieve,i-1,1
+
+pentru i<-2,n-1 executa
+	daca sieve[i] = 1 atunci
+		scrie i
+		pentru j<-i+i,n-1,i executa
+			sieve[j] <- 0

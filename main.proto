@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+message PostJob {
+  string code = 1;
+  bool language_enable_lists = 2;
+}
+
+message JobResponse {
+  message Success {
+    int32 job_id = 1;
+  }
+
+  message ParserError {
+    int32 line = 1;
+    int32 column = 2;
+    string message = 3;
+  }
+
+  oneof result {
+    Success success = 1;
+    ParserError parser_error = 2;
+    string other_error = 3;
+  }
+}
+
+message JobInput {
+  message Stdin {
+    string text = 1;
+  }
+  message Stop { }
+
+  oneof message {
+    Stdin stdin = 1;
+    Stop stop = 2;
+  }
+}
+
+message JobOutput {
+  message Stdout {
+    string text = 1;
+  }
+
+  oneof message {
+    Stdout stdout = 1;
+  }
+}

@@ -96,7 +96,7 @@ impl<'src, 'ctx> Compiler<'src, 'ctx> {
 			let misc_block = context.append_basic_block(main_fn, "misc");
 			misc_builder.position_at_end(misc_block);
 
-			let float_type_name_ptr = misc_builder.build_global_string_ptr("expresie", "float_type_name")?.as_pointer_value();
+			let float_type_name_ptr = misc_builder.build_global_string_ptr("număr", "float_type_name")?.as_pointer_value();
 			let list_type_name_ptr = misc_builder.build_global_string_ptr("listă", "list_type_name")?.as_pointer_value();
 
 			let fail_variable_unset_format_ptr = misc_builder.build_global_string_ptr("[%d:%d] Eroare: variabila „%s” nu are nici o valoare.\n", "format")?.as_pointer_value();

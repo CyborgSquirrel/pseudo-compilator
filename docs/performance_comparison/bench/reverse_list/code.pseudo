@@ -1,0 +1,12 @@
+citeste n
+
+list <- ,
+pentru i<-1,n executa
+	citeste x
+	insereaza list,i-1,x
+
+pentru i<-0,[n/2]-1 executa
+	list[i] <-> list[n-1-i]
+
+pentru i<-0,n-1 executa
+	scrie list[i]

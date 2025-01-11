@@ -30,13 +30,19 @@ The following is a selection of intriguing facts about the Pseudocode compiler:
   `dacă`, `execută`, ...
 - Some keywords include a space character: `cât timp`, `până când`.
 - There are some operators which are (likely) absent from other languages:
-  - `x|y` (not binary or!), which returns true if `x` divides `y`, and false
+  - `x|y` (not binary or), which returns true if `x` divides `y`, and false
     otherwise (i.e. `3|6` is true, and `3|7` is false)
   - `[x]`, which returns the integer part of `x` (i.e. `[3.14]=3`)
 
-![Debugging a Pseudocode file in gdbgui](docs/res/debug_progress.png)
+<figure>
+<figcaption>Debugging Pseudocode in gdbgui</figcaption>	
+<img src="docs/res/debug_progress.png" alt="Debugging Pseudocode in gdbgui" width="50%">
+</figure>
 
-![Writing Pseudocode in the editor bundled with the compiler](docs/res/editor_error.png)
+<figure>
+<figcaption>Writing Pseudocode in the editor bundled with the compiler</figcaption>	
+<img src="docs/res/editor_error.png" alt="Writing Pseudocode in the editor bundled with the compiler" width="50%">
+</figure>
 
 ### Codebase
 
@@ -59,7 +65,7 @@ Some of the techs which were used:
   [CodeMirror](https://codemirror.net/).
 - The editor backend is written in Python, using
   [Starlette](https://www.starlette.io/).
-- The thesis is written in [Typst ❤️](https://typst.app/).
+- The thesis is written in [Typst❤️](https://typst.app/).
 
 ### Running
 

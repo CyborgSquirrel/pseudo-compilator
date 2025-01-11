@@ -1,0 +1,9 @@
+citește a
+
+i <- 1
+cât timp i*i <= a execută
+	dacă a%i = 0 atunci
+		scrie i
+		dacă i != a atunci
+			scrie a/i
+	i <- i+1

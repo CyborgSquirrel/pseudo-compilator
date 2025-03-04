@@ -54,14 +54,14 @@ This codebase consists of:
 - [docs/](docs/), my Bachelor thesis, which details the design and
   implementation of Pseudocode in exquisite detail
 
-Some of the techs which were used:
+Some of the technologies which were used:
 
 - The dependencies are managed by [Nix](https://nixos.org/).
 - The compiler is written in [Rust](https://www.rust-lang.org/), using an
   [LLVM](https://llvm.org/) wrapper called
   [Inkwell](https://github.com/TheDan64/inkwell), to handle the heavy lifting of
   compilation.
-- The editor frontend is written TypeScript, using
+- The editor frontend is written in TypeScript, using
   [CodeMirror](https://codemirror.net/).
 - The editor backend is written in Python, using
   [Starlette](https://www.starlette.io/).
